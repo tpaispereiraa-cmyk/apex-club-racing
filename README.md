@@ -79,3 +79,13 @@ O **Muro dos boxes** prioriza avisos dos dois carros sobre combustível, avarias
 Novas sessões têm intensidade, início e duração da chuva determinados pela semente do fim de semana, incluindo cenários secos. A previsão usa esse mesmo cenário com janela aproximada, sem porcentagem de confiança inventada. Checkpoints antigos mantêm o roteiro climático anterior. Pneus intermediários e de chuva aquecem e gastam mais quando a superfície seca. Ainda não há clima por trecho, aquaplanagem ou trilho seco.
 
 Os saves de carreira continuam compatíveis. `physics-version.js` separa a revisão física do formato do save; recordes antigos ficam no histórico, mas não entram no ranking do novo modelo. `engineer.test.js` verifica recomendações, alertas, orçamento, comparação de setores, variação de clima e pneus de chuva no seco. A atualização está documentada em `ATUALIZACAO-ENGENHEIRO.md`.
+
+## Jogar online
+
+Versão pública: https://apex-club-racing.faleclinipet.chatgpt.site
+
+Código: https://github.com/tpaispereiraa-cmyk/apex-club-racing
+
+O progresso é salvo no navegador de cada jogador. Não há contas compartilhadas, multiplayer ou sincronização de saves entre dispositivos nesta versão. Para transportar sua carreira local, exporte o save e importe no jogo publicado.
+
+Para gerar o site estático, execute `npm run build`. A saída `dist/` inclui entradas para os dois modos e os 14 circuitos, com rotas absolutas a partir da raiz do domínio.
