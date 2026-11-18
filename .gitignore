@@ -1,0 +1,15 @@
+node_modules/
+dist/
+sites/
+artifacts/
+research/
+.openai/
+.env
+.env.*
+!.env.example
+*.log
+verification-*.txt
+interlagos-reference.webp
+*.zip
+.DS_Store
+Thumbs.db
