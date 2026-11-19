@@ -73,7 +73,7 @@ export function simulateField(cars,dt,elapsed,race=cars.race){
   updateRaceControl(race,dt);if(race.commands?.length){applyRaceCommands(cars,race.commands,race);race.commands=[];}
   const snapshot=cars.map(c=>({id:c.id,s:c.s,v:c.v,lane:c.pit?pitOffset(c.s):c.lane,pit:!!c.pit,finishTime:c.finishTime,retired:c.retired,car:c}));
   const green=!race.control||race.control.type==='green';
-  const yields=new Map(), passing=new Map();
+  const yields=new Map(), passing=new Set();
   if(green&&race.type!=='practice')for(const slower of snapshot){
     if(!slower.car.manager||!slower.car.released||slower.pit||slower.retired||slower.finishTime!==null||slower.car.pitRequested)continue;
     let nearest=null, best=950;
@@ -85,9 +85,8 @@ export function simulateField(cars,dt,elapsed,race=cars.race){
       if((isLapping||onFlyingLap)&&distance>0&&distance<best){nearest=faster;best=distance;}
     }
     if(!nearest)continue;
-    const lane=nearest.lane>=0?-24:24;
-    yields.set(slower.id,{lane,distance:best});
-    passing.set(nearest.id,-lane);
+    yields.set(slower.id,{faster:nearest,distance:best});
+    passing.add(nearest.id);
   }
   for(const c of cars){
     if(c.retired||c.inGarage)continue;
@@ -111,7 +110,7 @@ export function simulateField(cars,dt,elapsed,race=cars.race){
     const lead=ahead[0],gap=lead?mod(lead.s-c.s,length):Infinity,traffic=c.pit?0:clamp(1-gap/600,0,1);
     instructAI(c,race,gap);
     const behind=snapshot.filter(o=>o.id!==c.id&&o.car.released&&!o.car.inGarage&&!o.pit&&!o.retired&&o.finishTime===null&&mod(c.s-o.s,length)>0&&mod(c.s-o.s,length)<220).sort((a,b)=>mod(c.s-a.s,length)-mod(c.s-b.s,length))[0];
-    const yielding=yields.get(c.id),passLane=passing.get(c.id);
+    const yielding=yields.get(c.id),isPassing=passing.has(c.id);
     const zone=drsZoneAt(c.s);
     if(zone!==c.drsZone){c.drsZone=zone;c.drsEligible=zone>=0&&gap/Math.max(lead?.v||1,120)<1;}
     c.drs=zone>=0&&section.type==='straight'&&(race.type==='qualifying'||c.drsEligible&&elapsed>12)&&race.wetness<.22&&!c.pit&&!c.incident&&c.surface==='asphalt'&&c.finishTime===null;
@@ -133,15 +132,25 @@ export function simulateField(cars,dt,elapsed,race=cars.race){
     // headway and a stiff position correction produce stop-and-go shockwaves.
     if(sameLane&&!c.pit){const distance=mod(sameLane.s-c.s,length);if(distance<300){const desiredGap=requiredGap+c.v*.25;target=Math.min(target,Math.max(0,sameLane.v+(distance-desiredGap)*.8));}}
     trafficTarget=target;
-    if(sameLane&&!c.pit&&!yielding&&passLane===undefined&&!(c.manager&&c.pitRequested)&&c.decisionCooldown===0){
+    if(sameLane&&!c.pit&&!yielding&&!isPassing&&!(c.manager&&c.pitRequested)&&c.decisionCooldown===0){
       const gapAhead=mod(sameLane.s-c.s,length),other=c.lane>=0?-24:24,skill=battleScore(c)-battleScore(sameLane.car,true);
       const willingness=(.15+c.driver.aggression*.004+driver.overtaking*.002)*(c.manager?.orders.overtake==='careful'?.5:c.manager?.orders.overtake==='aggressive'?1.5:1);
       if((!race.control||race.control.type==='green')&&!(c.manager?.orders.team!=='race'&&c.manager&&sameLane.car.team.id===c.team.id)&&gapAhead<210&&laneClear(other)&&skill>-20&&target>sameLane.v-3&&random(race)<1-Math.exp(-willingness*dt)){
         c.laneTarget=other;c.decisionCooldown=1.8+(100-driver.overtaking)*.035;c.battleMode='ATACANDO';c.battleUntil=elapsed+2;c.metrics.attacks++;event(race,c,`prepara ataque a #${sameLane.car.number}`,'battle');
       }
     }
-    if(behind&&!c.pit&&!yielding&&passLane===undefined&&!(c.manager&&c.pitRequested)&&(!race.control||race.control.type==='green')&&c.manager?.orders.defend!=='preserve'&&c.decisionCooldown===0&&mod(c.s-behind.s,length)>115&&battleScore(c,true)>battleScore(behind.car)&&laneClear(behind.lane)&&random(race)<dt*(c.manager?.orders.defend==='firm'?.22:.12)){c.laneTarget=behind.lane>=0?24:-24;c.decisionCooldown=2.5;c.battleMode='DEFENDENDO';c.battleUntil=elapsed+2;c.metrics.defenses++;}
-    if(yielding&&!c.pit){c.laneTarget=yielding.lane;target=Math.min(target,yielding.distance<440?42:95);c.ers=false;c.drs=false;}else if(passLane!==undefined&&!c.pit)c.laneTarget=passLane;
+    if(behind&&!c.pit&&!yielding&&!isPassing&&!(c.manager&&c.pitRequested)&&(!race.control||race.control.type==='green')&&c.manager?.orders.defend!=='preserve'&&c.decisionCooldown===0&&mod(c.s-behind.s,length)>115&&battleScore(c,true)>battleScore(behind.car)&&laneClear(behind.lane)&&random(race)<dt*(c.manager?.orders.defend==='firm'?.22:.12)){c.laneTarget=behind.lane>=0?24:-24;c.decisionCooldown=2.5;c.battleMode='DEFENDENDO';c.battleUntil=elapsed+2;c.metrics.defenses++;}
+    if(yielding&&!c.pit){
+      c.laneTarget=24;
+      // Slow only after opening the lane. Braking before that can pin both lanes
+      // to the same speed when a group of leaders catches several lapped cars.
+      const {faster,distance}=yielding;
+      if(c.lane>12&&faster.lane<-12&&faster.v>105){
+        target=Math.min(target,distance<440?42:95);
+        c.ers=false;
+        c.drs=false;
+      }
+    }else if(isPassing&&!c.pit)c.laneTarget=-24;
     let brake=clamp((c.v-target)/65,0,1);incident(c,race,section,dt,brake>0,traffic);requestPit(c,race);
     if(c.pitRequested&&!c.pit&&mod(PIT.entry-c.s,length)<(c.manager?1000:500)){if(laneClear(-24))c.laneTarget=-24;else if(c.manager&&c.lane>-12)target=Math.min(target,170);}
     if(c.incident){target=Math.min(target,c.incident.kind==='spin'?35:c.incident.kind==='wide'?110:160);c.drs=false;c.ers=false;}

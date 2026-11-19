@@ -127,6 +127,16 @@ test('a lapped car gives space and slows down before the leader reaches it',()=>
   assert.equal(lapped.metrics.contacts,0);
 });
 
+test('a blue flag does not brake the lapped car while the passing lane is occupied',()=>{
+  const {cars,session}=pack(),[lead,lapped,other]=cars;
+  for(const [c,s,lane] of [[lead,length+3600,24],[lapped,3960,24],[other,3950,-24]]){
+    Object.assign(c,{s,progress:s,v:240,lane,laneTarget:lane,errorCooldown:1000,decisionCooldown:1000},at(s,lane));
+  }
+  simulateField([lead,lapped,other],1/60,12,session);
+  assert.equal(lapped.status,'BANDEIRA AZUL');
+  assert.ok(lapped.telemetry.target>95);
+});
+
 test('an extra practice run only spends the selected car’s tyres and kilometres',()=>{
   const ctl=createManagerController({getItem:()=>null,setItem:()=>{}});
   ctl.create('cobalto','Teste de treino');
