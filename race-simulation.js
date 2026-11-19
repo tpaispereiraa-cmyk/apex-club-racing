@@ -1,3 +1,4 @@
+import {queuePit} from './manager/pit-calls.js';
 import {conditionOf} from './weekend-archive.js';
 import {recordSectorCrossings,flushSectorCrossings,newSectorTiming} from './sector-timing.js';
 import {at,length,mod,clamp,ROAD,CIRCUIT} from './track.js';
@@ -14,37 +15,45 @@ export function createField(race=createRace(),gridResults=null,customEntries=nul
   // Seedable grid estimate; this is not a separate qualifying session.
   let entries=startingGrid().map(e=>({...e,qualifying:(20-e.grid)*.6+driverRating(e.driver)*.35+random(race)*1.6})).sort((a,b)=>b.qualifying-a.qualifying);
   if(customEntries){const byId=new Map(customEntries.map(e=>[e.id,e]));entries=entries.map(e=>({...e,...structuredClone(byId.get(e.id)??{})}));}
+  if(race.type==='practice'&&race.practiceCar)entries=entries.filter(e=>e.id===race.practiceCar);
   if(gridResults){const positions=new Map(gridResults.map((r,i)=>[r.id,i]));if(entries.some(e=>!positions.has(e.id)))throw new Error('Grid com carro desconhecido ou ausente.');entries.sort((a,b)=>positions.get(a.id)-positions.get(b.id));}
   const qualifying=race.type!=='race';
   const field=entries.map((entry,grid)=>{let s=qualifying?-length+PIT.exit:-80-Math.floor(grid/2)*GRID_SPACING,lane=qualifying?-24:grid%2?24:-24;
     return{...entry,grid,...at(s,lane),s,progress:s,lap:1,v:0,lane,laneTarget:lane,finishTime:null,lapStart:null,bestLap:Infinity,previousLap:1,
-      lapTimes:[],lapDetails:[],pitHistory:[],lapContext:null,sectorTiming:newSectorTiming(),released:!qualifying,releaseAt:qualifying?grid*2.25:0,inGarage:false,
+      lapTimes:[],lapDetails:[],pitHistory:[],lapContext:null,sectorTiming:newSectorTiming(),released:!qualifying,releaseAt:qualifying?grid*(race.type==='qualifying'&&customEntries?9:2.25):0,inGarage:false,
       launchDelay:.08+(100-entry.driver.stats.reactions)*.012,compound:bestCompound(race.wetness),tyreLife:100,tyreTemp:race.wetness>.2?70:90,
       engineTemp:88,engineHealth:100,energy:80,fuel:(10+race.laps*11)*length/14577.843081736215,damage:0,damageParts:{frontWing:0,rearWing:0,suspension:0},fault:null,retired:false,retirementTime:null,contactUntil:0,surface:'asphalt',escapeSide:0,drs:false,drsEligible:false,drsZone:-1,ers:false,
       pit:null,pitRequested:false,pitReason:'',pitStops:0,status:'LARGADA',incident:null,errorCooldown:5,decisionCooldown:0,battleMode:'',battleUntil:0,metrics:{attacks:0,defenses:0,errors:0,contacts:0,faults:0,gravel:0},telemetry:{}};
   });
-  for(const c of field){c.compound=chooseCompound(c,race);c.raceWorldLength=length;c.raceMetres=CIRCUIT.metres;c.tyreFittedAtS=c.s;c.tyreHistory=[];if(c.manager){c.compound=race.type==='practice'?'medium':qualifying?'soft':c.manager.strategy.compound;if(c.manager.tyreStock[c.compound]<=0)c.compound=managedCompound(c,race,'medium');if(c.manager.tyreStock[c.compound]>0)c.manager.tyreStock[c.compound]--;c.fuel=!qualifying&&c.manager.strategy.fuelKg!==undefined?c.manager.strategy.fuelKg:(qualifying?20:(10+race.laps*3.5)*(CIRCUIT.metres/4309));c.engineHealth=c.manager.engineCondition??100;}}
+  for(const c of field){c.compound=chooseCompound(c,race);c.raceWorldLength=length;c.raceMetres=CIRCUIT.metres;c.tyreFittedAtS=c.s;c.tyreHistory=[];if(c.manager){c.compound=race.type==='practice'?(race.practiceCompound??'medium'):qualifying?'soft':c.manager.strategy.compound;if(c.manager.tyreStock[c.compound]<=0)c.compound=managedCompound(c,race,'medium');if(c.manager.tyreStock[c.compound]>0)c.manager.tyreStock[c.compound]--;c.fuel=!qualifying&&c.manager.strategy.fuelKg!==undefined?c.manager.strategy.fuelKg:(qualifying?20:(10+race.laps*3.5)*(CIRCUIT.metres/4309));c.engineHealth=c.manager.engineCondition??100;}}
   for(const c of field)c.tyreHistory.push({compound:c.compound,lap:1});
   field.race=race;return field;
 }
-function requestPit(c,race){if(c.finishTime!==null||c.retired||c.pit||c.pitRequested)return;
+function requestPit(c,race){if(c.finishTime!==null||c.retired||c.pit||c.manager?.pitCall?.source==='safety')return;
   const suitability=tyreSuitability(c.compound,race.wetness);const wrong=bestCompound(race.wetness)!==c.compound&&suitability<(c.manager?.65:.9);const worn=c.tyreLife<(c.manager?10:38);
   const available=!c.manager||Object.values(c.manager.tyreStock).some(n=>n>0);
-  if(available&&(wrong||worn)||c.damage>12||!c.manager&&c.engineHealth<76||c.fault){c.pitRequested=true;c.pitReason=c.fault?FAULT_LABELS[c.fault.type]:wrong?'troca para '+COMPOUNDS[chooseCompound(c,race)].name:worn?'pneus gastos':'reparo';event(race,c,'box solicitado · '+c.pitReason,'pit');}
+  const safety = c.damage > 12 || !!c.fault || c.tyreLife < 3 || (!c.manager && c.engineHealth < 76);
+  if (!safety && !(available && (wrong || worn))) return;
+  if (!c.manager && c.pitRequested) return;
+  const reason = c.fault ? FAULT_LABELS[c.fault.type] : safety && c.damage > 12 ? 'reparo' : wrong ? 'troca por clima' : 'pneus gastos';
+  if (queuePit(c, {source:safety?'safety':'rule', reason})) event(race,c,'box solicitado · '+reason,'pit');
 }
 function enterPit(c,race){
   const index=TEAMS.findIndex(t=>t.id===c.team.id),marker=garageStop(index),base=Math.floor(c.s/length)*length;
   c.pit={stopAt:base+marker,exitAt:base+length+PIT.exit,served:false,remaining:0,compound:managedCompound(c,race,chooseCompound(c,race))};
   if(c.pit.stopAt<c.s)c.pit.stopAt+=length;
+  c.pit.entryLap=c.lap;
+  c.pit.call=c.manager?.pitCall??null;
+  if(c.manager)c.manager.pitNotice=null;
   if(c.lapContext)c.lapContext.pit=true;
   c.pitRequested=false;c.drs=false;c.status='PIT LANE';event(race,c,'entrou nos boxes','pit');
 }
 function service(c,race,dt){
   const pit=c.pit;if(!pit||pit.served||c.s<pit.stopAt-.01)return false;
-  if(pit.remaining===0){pit.serviceStartedAt=race.elapsed;pit.reason=c.pitReason;pit.from=c.compound;pit.compound=managedCompound(c,race,chooseCompound(c,race));pit.remaining=managedPitTime(c,race,random)+c.damage*.16+(c.engineHealth<85?3:0)+(c.fault?5:0);if(c.manager){c.manager.serviceCosts=(c.manager.serviceCosts??0)+Math.ceil(c.damage*1700+(c.fault?50000:0));c.manager.repairedDamage=(c.manager.repairedDamage??0)+c.damage;}}
+  if(pit.remaining===0){pit.serviceStartedAt=race.elapsed;pit.reason=c.pitReason;pit.from=c.compound;pit.remaining=managedPitTime(c,race,random)+c.damage*.16+(c.engineHealth<85?3:0)+(c.fault?5:0);if(c.manager){c.manager.serviceCosts=(c.manager.serviceCosts??0)+Math.ceil(c.damage*1700+(c.fault?50000:0));c.manager.repairedDamage=(c.manager.repairedDamage??0)+c.damage;}}
   pit.remaining=Math.max(.000001,pit.remaining-dt);c.v=0;c.status='TROCA DE PNEUS';
-  if(pit.remaining<=.000001){c.pitHistory??=[];c.pitHistory.push({lap:c.lap,time:race.elapsed,seconds:pit.serviceStartedAt===undefined?null:race.elapsed-pit.serviceStartedAt,from:pit.from??c.compound,compound:pit.compound,reason:pit.reason??c.pitReason,repair:!!c.fault||c.damage>0});const repair=!!c.fault||c.damage>0,canFit=!c.manager||c.manager.tyreStock[pit.compound]>0;c.pitHistory.at(-1).compound=canFit?pit.compound:c.compound;c.pitHistory.at(-1).tyresChanged=canFit;if(canFit){c.tyreHistory??=[];c.tyreHistory.push({compound:pit.compound,lap:c.lap});c.tyreFittedAtS=c.s;c.compound=pit.compound;c.tyreLife=100;c.tyreTemp=isDryTyre(c.compound)?85:65;if(c.manager)c.manager.frontTemp=c.manager.rearTemp=c.tyreTemp;}c.damage=0;c.damageParts={frontWing:0,rearWing:0,suspension:0};c.fault=null;c.engineHealth=c.manager?Math.min(c.manager.engineCondition??100,Math.max(c.engineHealth,85)):Math.max(c.engineHealth,94);c.engineTemp=Math.min(c.engineTemp,98);pit.served=true;c.pitStops++;event(race,c,(canFit?'pneus '+COMPOUNDS[c.compound].name.toLowerCase()+' instalados':'sem pneus novos · manteve conjunto')+(repair?' · reparo concluído':''),'pit');}
-  if(pit.served&&c.manager){if(c.manager.tyreStock[pit.compound]>0)c.manager.tyreStock[pit.compound]--;c.manager.requestedCompound=null;c.manager.pit.fatigue=clamp(c.manager.pit.fatigue+3,0,100);}
+  if(pit.remaining<=.000001){c.pitHistory??=[];c.pitHistory.push({lap:c.lap,entryLap:pit.entryLap??c.lap,calledLap:pit.call?.calledLap??null,source:pit.call?.source??null,time:race.elapsed,seconds:pit.serviceStartedAt===undefined?null:race.elapsed-pit.serviceStartedAt,from:pit.from??c.compound,compound:pit.compound,reason:pit.reason??c.pitReason,repair:!!c.fault||c.damage>0});const repair=!!c.fault||c.damage>0,canFit=!c.manager||c.manager.tyreStock[pit.compound]>0;c.pitHistory.at(-1).compound=canFit?pit.compound:c.compound;c.pitHistory.at(-1).tyresChanged=canFit;if(canFit){c.tyreHistory??=[];c.tyreHistory.push({compound:pit.compound,lap:c.lap});c.tyreFittedAtS=c.s;c.compound=pit.compound;c.tyreLife=100;c.tyreTemp=isDryTyre(c.compound)?85:65;if(c.manager)c.manager.frontTemp=c.manager.rearTemp=c.tyreTemp;}c.damage=0;c.damageParts={frontWing:0,rearWing:0,suspension:0};c.fault=null;c.engineHealth=c.manager?Math.min(c.manager.engineCondition??100,Math.max(c.engineHealth,85)):Math.max(c.engineHealth,94);c.engineTemp=Math.min(c.engineTemp,98);pit.served=true;c.pitStops++;event(race,c,(canFit?'pneus '+COMPOUNDS[c.compound].name.toLowerCase()+' instalados':'sem pneus novos · manteve conjunto')+(repair?' · reparo concluído':''),'pit');}
+  if(pit.served&&c.manager){if(c.manager.tyreStock[pit.compound]>0)c.manager.tyreStock[pit.compound]--;if(pit.call?.planIndex!==undefined&&c.pitHistory.at(-1).tyresChanged){c.manager.usedStops??=[];c.manager.usedStops.push(pit.call.planIndex);}c.manager.pitCall=null;c.manager.requestedCompound=null;c.manager.pit.fatigue=clamp(c.manager.pit.fatigue+3,0,100);}
   return true;
 }
 function incident(c,race,section,dt,braking,traffic){
@@ -63,6 +72,23 @@ export function simulateField(cars,dt,elapsed,race=cars.race){
   race??=createRace({weather:'dry'});cars.race=race;updateWeather(race,dt,elapsed);
   updateRaceControl(race,dt);if(race.commands?.length){applyRaceCommands(cars,race.commands,race);race.commands=[];}
   const snapshot=cars.map(c=>({id:c.id,s:c.s,v:c.v,lane:c.pit?pitOffset(c.s):c.lane,pit:!!c.pit,finishTime:c.finishTime,retired:c.retired,car:c}));
+  const green=!race.control||race.control.type==='green';
+  const yields=new Map(), passing=new Map();
+  if(green&&race.type!=='practice')for(const slower of snapshot){
+    if(!slower.car.manager||!slower.car.released||slower.pit||slower.retired||slower.finishTime!==null||slower.car.pitRequested)continue;
+    let nearest=null, best=950;
+    for(const faster of snapshot){
+      if(!faster.car.released||faster.pit||faster.retired||faster.finishTime!==null||faster.id===slower.id)continue;
+      const distance=mod(slower.s-faster.s,length);
+      const isLapping=race.type==='race'&&faster.s-slower.s>length*.85;
+      const onFlyingLap=race.type==='qualifying'&&slower.s<0&&faster.s>=0;
+      if((isLapping||onFlyingLap)&&distance>0&&distance<best){nearest=faster;best=distance;}
+    }
+    if(!nearest)continue;
+    const lane=nearest.lane>=0?-24:24;
+    yields.set(slower.id,{lane,distance:best});
+    passing.set(nearest.id,-lane);
+  }
   for(const c of cars){
     if(c.retired||c.inGarage)continue;
     // Coast visually after the flag, but freeze race resources and distance.
@@ -85,6 +111,7 @@ export function simulateField(cars,dt,elapsed,race=cars.race){
     const lead=ahead[0],gap=lead?mod(lead.s-c.s,length):Infinity,traffic=c.pit?0:clamp(1-gap/600,0,1);
     instructAI(c,race,gap);
     const behind=snapshot.filter(o=>o.id!==c.id&&o.car.released&&!o.car.inGarage&&!o.pit&&!o.retired&&o.finishTime===null&&mod(c.s-o.s,length)>0&&mod(c.s-o.s,length)<220).sort((a,b)=>mod(c.s-a.s,length)-mod(c.s-b.s,length))[0];
+    const yielding=yields.get(c.id),passLane=passing.get(c.id);
     const zone=drsZoneAt(c.s);
     if(zone!==c.drsZone){c.drsZone=zone;c.drsEligible=zone>=0&&gap/Math.max(lead?.v||1,120)<1;}
     c.drs=zone>=0&&section.type==='straight'&&(race.type==='qualifying'||c.drsEligible&&elapsed>12)&&race.wetness<.22&&!c.pit&&!c.incident&&c.surface==='asphalt'&&c.finishTime===null;
@@ -106,16 +133,17 @@ export function simulateField(cars,dt,elapsed,race=cars.race){
     // headway and a stiff position correction produce stop-and-go shockwaves.
     if(sameLane&&!c.pit){const distance=mod(sameLane.s-c.s,length);if(distance<300){const desiredGap=requiredGap+c.v*.25;target=Math.min(target,Math.max(0,sameLane.v+(distance-desiredGap)*.8));}}
     trafficTarget=target;
-    if(sameLane&&!c.pit&&c.decisionCooldown===0){
+    if(sameLane&&!c.pit&&!yielding&&passLane===undefined&&!(c.manager&&c.pitRequested)&&c.decisionCooldown===0){
       const gapAhead=mod(sameLane.s-c.s,length),other=c.lane>=0?-24:24,skill=battleScore(c)-battleScore(sameLane.car,true);
       const willingness=(.15+c.driver.aggression*.004+driver.overtaking*.002)*(c.manager?.orders.overtake==='careful'?.5:c.manager?.orders.overtake==='aggressive'?1.5:1);
       if((!race.control||race.control.type==='green')&&!(c.manager?.orders.team!=='race'&&c.manager&&sameLane.car.team.id===c.team.id)&&gapAhead<210&&laneClear(other)&&skill>-20&&target>sameLane.v-3&&random(race)<1-Math.exp(-willingness*dt)){
         c.laneTarget=other;c.decisionCooldown=1.8+(100-driver.overtaking)*.035;c.battleMode='ATACANDO';c.battleUntil=elapsed+2;c.metrics.attacks++;event(race,c,`prepara ataque a #${sameLane.car.number}`,'battle');
       }
     }
-    if(behind&&!c.pit&&(!race.control||race.control.type==='green')&&c.manager?.orders.defend!=='preserve'&&c.decisionCooldown===0&&mod(c.s-behind.s,length)>115&&battleScore(c,true)>battleScore(behind.car)&&laneClear(behind.lane)&&random(race)<dt*(c.manager?.orders.defend==='firm'?.22:.12)){c.laneTarget=behind.lane>=0?24:-24;c.decisionCooldown=2.5;c.battleMode='DEFENDENDO';c.battleUntil=elapsed+2;c.metrics.defenses++;}
+    if(behind&&!c.pit&&!yielding&&passLane===undefined&&!(c.manager&&c.pitRequested)&&(!race.control||race.control.type==='green')&&c.manager?.orders.defend!=='preserve'&&c.decisionCooldown===0&&mod(c.s-behind.s,length)>115&&battleScore(c,true)>battleScore(behind.car)&&laneClear(behind.lane)&&random(race)<dt*(c.manager?.orders.defend==='firm'?.22:.12)){c.laneTarget=behind.lane>=0?24:-24;c.decisionCooldown=2.5;c.battleMode='DEFENDENDO';c.battleUntil=elapsed+2;c.metrics.defenses++;}
+    if(yielding&&!c.pit){c.laneTarget=yielding.lane;target=Math.min(target,yielding.distance<440?42:95);c.ers=false;c.drs=false;}else if(passLane!==undefined&&!c.pit)c.laneTarget=passLane;
     let brake=clamp((c.v-target)/65,0,1);incident(c,race,section,dt,brake>0,traffic);requestPit(c,race);
-    if(c.pitRequested&&!c.pit&&mod(PIT.entry-c.s,length)<500&&laneClear(-24))c.laneTarget=-24;
+    if(c.pitRequested&&!c.pit&&mod(PIT.entry-c.s,length)<(c.manager?1000:500)){if(laneClear(-24))c.laneTarget=-24;else if(c.manager&&c.lane>-12)target=Math.min(target,170);}
     if(c.incident){target=Math.min(target,c.incident.kind==='spin'?35:c.incident.kind==='wide'?110:160);c.drs=false;c.ers=false;}
     if(c.surface==='gravel')target=Math.min(target,95);if(c.fault?.type==='puncture')target=Math.min(target,100);
     if(c.pit){target=Math.min(target,140);if(!c.pit.served&&c.s<c.pit.stopAt)target=Math.min(target,Math.sqrt(2*cap.braking*Math.max(0,c.pit.stopAt-c.s)));}
@@ -152,7 +180,7 @@ export function simulateField(cars,dt,elapsed,race=cars.race){
     const surface=c.pit?'pit':Math.abs(c.lane)+CAR_WIDTH/2>ROAD/2?'gravel':'asphalt';
     if(surface==='gravel'&&c.surface!=='gravel'){c.metrics.gravel++;event(race,c,'saiu para a brita · perde aderência','incident');}c.surface=surface;
     c.telemetry={...c.telemetry,section:section.type,target,freeTarget,trafficTarget,requestedTravel,travel,requiredGap,immediateGap,laneScale,blockingCar,blockingDistance,drs:c.drs,surface};
-    if(!c.incident)c.status=c.inGarage?(race.type==='practice'?'TESTE CONCLUÍDO':'CLASSIFICADO'):c.finishTime!==null?'FINALIZOU':race.type==='qualifying'&&c.lapStart===null?'VOLTA DE SAÍDA':c.pit?'PIT LANE':c.fault?FAULT_LABELS[c.fault.type]:c.surface==='gravel'?'NA BRITA':c.contactUntil>elapsed?'CONTATO':c.pitRequested?'BOX SOLICITADO':c.engineTemp>113?'PROTEÇÃO TÉRMICA':c.battleUntil>elapsed?c.battleMode:c.drs?'DRS ABERTO':c.ers?'ERS ATAQUE':brake>.1?'FREANDO':gap<240?'EM DISPUTA':'RITMO';
+    if(!c.incident)c.status=c.inGarage?(race.type==='practice'?'TESTE CONCLUÍDO':'CLASSIFICADO'):c.finishTime!==null?'FINALIZOU':c.pit?'PIT LANE':yielding?(race.type==='race'?'BANDEIRA AZUL':'CEDENDO VOLTA RÁPIDA'):race.type==='qualifying'&&c.lapStart===null?'VOLTA DE SAÍDA':c.fault?FAULT_LABELS[c.fault.type]:c.surface==='gravel'?'NA BRITA':c.contactUntil>elapsed?'CONTATO':c.pitRequested?'BOX SOLICITADO':c.engineTemp>113?'PROTEÇÃO TÉRMICA':c.battleUntil>elapsed?c.battleMode:c.drs?'DRS ABERTO':c.ers?'ERS ATAQUE':brake>.1?'FREANDO':gap<240?'EM DISPUTA':'RITMO';
     Object.assign(c,at(c.s,c.pit?pitOffset(c.s):c.lane));if(c.incident?.kind==='spin')c.angle+=Math.sin(c.incident.remaining*5)*1.4;
   }
   flushSectorCrossings(cars,race);

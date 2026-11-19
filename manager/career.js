@@ -39,12 +39,13 @@ export function dispatchCareer(state,command){
   if(state.processed[command.id])return state; // Exactly-once local command application.
   if(command.revision!==state.revision)throw Error('Estado desatualizado; recarregue antes de continuar.');
   const s=copy(state),id=command.teamId??s.selectedTeam;checkOwnership(s,id,command.actorId);const t=s.teams[id],a=command.args??{},car=t.cars[a.slot??0];
-  const changesRoster=!['orders','box','strategy','practice','startWeekend','settleRace'].includes(command.type);if(changesRoster)unlocked(s);
+  const changesRoster=!['orders','box','keepOut','strategy','practice','startWeekend','settleRace'].includes(command.type);if(changesRoster)unlocked(s);
   switch(command.type){
     case 'rename':validName(a.name);t.name=a.name.trim();break;
     case 'setup':if(!car)throw Error('Carro inválido.');setupChange(car,a.patch);break;
     case 'orders':if(!car)throw Error('Carro inválido.');validateOrders(a.patch);Object.assign(car.orders,a.patch);if(s.active)s.active.pending.push({id:command.id,teamId:id,slot:car.slot,type:'orders',patch:copy(a.patch),sequence:s.revision+1});break;
-    case 'box':if(!s.active||s.active.phase!=='race'||!car)throw Error('Box disponível durante a corrida.');if(!['soft','medium','hard','inter','wet'].includes(a.compound))throw Error('Composto inválido.');s.active.pending.push({id:command.id,teamId:id,slot:car.slot,type:'box',compound:a.compound,sequence:s.revision+1});break;
+    case 'keepOut':
+    case 'box':if(!s.active||s.active.phase!=='race'||!car)throw Error('Box disponível durante a corrida.');if(command.type==='box'&&!['soft','medium','hard','inter','wet'].includes(a.compound))throw Error('Composto inválido.');s.active.pending.push({id:command.id,teamId:id,slot:car.slot,type:command.type,compound:a.compound,sequence:s.revision+1});break;
     case 'strategy':if(s.active?.phase!=='qualifyingReview')unlocked(s);if(!car)throw Error('Carro inválido.');validateStrategy(a.plan,raceLaps(s.calendar[s.round]));car.strategy=copy(a.plan);break;
     case 'design':{
       const q=designQuote(s,id,a),part=a.part,used=s.jobs.filter(j=>j.teamId===id&&j.status==='working'&&j.kind!=='manufacture').reduce((n,j)=>n+j.engineers,0);

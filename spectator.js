@@ -1,3 +1,5 @@
+import {applyRaceCommands} from './manager/race-control.js';
+import {pitWallHTML} from './manager/pit-wall.js';
 import {liveAdvice} from './manager/engineer.js';
 import {ORDER_LABELS} from './manager/model.js';
 import {weatherForecast} from './weather.js';
@@ -44,7 +46,7 @@ export async function bootSpectator({canvas,ctx,world}){
   addEventListener('resize',resize);resize();setupPaddock();
   const managerUI=setupManagerUI(manager,{autoOpen:false,onStart:()=>{if(managerMode&&state==='racing'&&!finished){paused=false;return;}managerMode=true;$('#live-manager').hidden=false;openScreen('hub');},onOpen:()=>{managerWasPaused=paused;if(state==='racing')paused=true;},onClose:()=>{if(state==='racing')paused=managerWasPaused;else weekendUI.refresh();},onQualifying:()=>{managerMode=true;openScreen('brief-qualifying');},getLive:()=>managerMode&&state==='racing'?{cars,race,elapsed}:null});
   const watchUI=createWatchDashboard({onFollow:id=>{director=false;overview=false;followedId=id;saveLiveView();hud();},onPrevious:()=>switchCar(-1),onNext:()=>switchCar(1),onCamera:()=>$('#camera-mode').click(),onPause:()=>$('#pause').click(),onSpeed:()=>$('#race-speed').click(),onDirector:()=>{director=!director;directorTimer=0;saveLiveView();hud();}});
-  const weekendUI=createWeekendUI({getContext:()=>({career:activeController().state,manager:managerMode,cars,race,hasLive:activeController().state?.active?.circuit===CIRCUIT.id&&!!activeController().state?.active?.checkpoints&&!sessionComplete(activeController().state.active.checkpoints.cars)}),onView:(screen,details)=>activeController().view(screen,details),onAction:action=>{try{weekendAction(action);}catch(e){weekendUI.error(e.message);}}});
+  const weekendUI=createWeekendUI({getContext:()=>({career:activeController().state,manager:managerMode,cars,race,hasLive:activeController().state?.active?.circuit===CIRCUIT.id&&!!activeController().state?.active?.checkpoints&&!sessionComplete(activeController().state.active.checkpoints.cars)}),onView:(screen,details)=>activeController().view(screen,details),onAction:(action,args)=>{try{weekendAction(action,args);}catch(e){weekendUI.error(e.message);}}});
   const weekendButton=document.createElement('button');weekendButton.textContent='CENTRAL DO GP';weekendButton.onclick=()=>openScreen('hub');document.querySelector('.race-actions').append(weekendButton);
   const simulateButton=document.createElement('button');simulateButton.textContent='SIMULAR RESTANTE';simulateButton.onclick=()=>simulateSession();document.querySelector('.race-actions').append(simulateButton);
   const stintButton=document.createElement('button');stintButton.textContent='AVANÇAR 3 VOLTAS';stintButton.onclick=()=>simulateSession(3);document.querySelector('.race-actions').append(stintButton);
@@ -80,11 +82,47 @@ export async function bootSpectator({canvas,ctx,world}){
   }
   const broadcastHub=document.createElement('button');broadcastHub.className='watch-weekend-link';broadcastHub.textContent='PADDOCK ↗';broadcastHub.onclick=()=>openScreen('hub');document.body.append(broadcastHub);
   const engineerRadio=document.createElement('aside');engineerRadio.id='engineer-radio';engineerRadio.hidden=true;engineerRadio.setAttribute('aria-label','Avisos do engenheiro');engineerRadio.innerHTML='<div class="engineer-radio-label">MURO DOS BOXES <span>AO VIVO</span></div><div data-engineer-alerts></div>';document.body.append(engineerRadio);engineerRadio.addEventListener('click',e=>{const b=e.target.closest('[data-engineer-slot]');if(b)managerUI.show('strategy',Number(b.dataset.engineerSlot));});
+  const pitWall=document.createElement('section');
+  pitWall.id='pit-wall';
+  pitWall.hidden=true;
+  pitWall.setAttribute('aria-label','Estratégia ao vivo');
+  document.body.append(pitWall);
+  let pitSlot=0;
+  const pitCompounds={};
+  pitWall.addEventListener('change',e=>{if(e.target.matches('[data-pit-compound]'))pitCompounds[pitSlot]=e.target.value;});
+  pitWall.addEventListener('click',e=>{
+    const select=e.target.closest('[data-pit-slot]');
+    if(select){
+      pitSlot=Number(select.dataset.pitSlot);
+      const car=cars.find(c=>c.team.id===manager.state.selectedTeam&&c.slot===pitSlot);
+      if(car){followedId=car.id;saveLiveView();}
+      hud();
+      return;
+    }
+    const order=e.target.closest('[data-pit-action]');
+    if(!order||sessionWorker||state!=='racing'||race.type!=='race')return;
+    try{
+      manager.command(order.dataset.pitAction,{slot:pitSlot,compound:pitWall.querySelector('[data-pit-compound]').value});
+      manager.live(race);
+      applyRaceCommands(cars,race.commands,race);
+      race.commands=[];
+      manager.checkpoint(cars,race,elapsed);
+      hud();
+    }catch(error){pitWall.querySelector('.pit-wall-call b').textContent=error.message;}
+  });
   const mapContext=$('#map').getContext('2d');
   // Render the map from the exact same centerline as the race.
   function map(){mapContext.clearRect(0,0,290,150);mapContext.save();const scale=Math.min(266/W,135/H);mapContext.translate((290-W*scale)/2,(150-H*scale)/2);mapContext.scale(scale,scale);mapContext.strokeStyle='#a9bb93';mapContext.lineWidth=3/scale;mapContext.beginPath();for(let s=0;s<length;s+=15){let p=at(s);s?mapContext.lineTo(p.x,p.y):mapContext.moveTo(p.x,p.y);}mapContext.closePath();mapContext.stroke();let p=at(0);mapContext.fillStyle='#d5f561';mapContext.beginPath();mapContext.arc(p.x,p.y,4/scale,0,Math.PI*2);mapContext.fill();mapContext.restore();}map();
   const currentOrder=()=>race.type!=='race'?qualifyingOrder(cars):raceOrder(cars);
   function hud(){$('#pause').textContent=paused?'RETOMAR P':'PAUSAR P';const c=followed(),order=currentOrder(),rank=order.indexOf(c)+1,q=race.type!=='race';
+    pitWall.hidden=!managerMode||state!=='racing'||race.type!=='race'||finished;
+    if(!pitWall.hidden){
+      const team=cars.filter(car=>car.team.id===manager.state.selectedTeam).sort((a,b)=>a.slot-b.slot);
+      const observed=team.find(car=>car.id===followedId);
+      if(observed)pitSlot=observed.slot;
+      const selected=team.find(car=>car.slot===pitSlot)??team[0];
+      if(selected)updateMarkup(pitWall,pitWallHTML({car:selected,team,order,race,compound:pitCompounds[pitSlot],expanded:pitWall.querySelector('details')?.open}));
+    }
     engineerRadio.hidden=!managerMode||state!=='racing'||finished;
     if(!engineerRadio.hidden){const ownCars=cars.filter(x=>x.team.id===manager.state.selectedTeam),alerts=ownCars.flatMap(x=>liveAdvice(x,race).alerts.map(a=>({...a,slot:x.slot,driver:x.driver.name}))).sort((a,b)=>({critical:0,warning:1,info:2}[a.severity]-{critical:0,warning:1,info:2}[b.severity]));engineerRadio.hidden=!alerts.length;updateMarkup(engineerRadio.querySelector('[data-engineer-alerts]'),alerts.filter((a,i,all)=>a.id!=='weather'||all.findIndex(x=>x.id==='weather')===i).slice(0,2).map(a=>`<button class="engineer-radio-alert ${a.severity}" data-engineer-slot="${a.slot}"><span>${a.driver}</span><b>${a.title}</b><p>${a.text}</p><small>REVISAR INSTRUÇÕES ↗</small></button>`).join(''));}
     watchUI.update({active:!managerMode&&state==='racing',c,cars,order,race,elapsed,career:watch.state,paused,speed:raceSpeed,overview,director,cameraReason});
@@ -105,20 +143,20 @@ export async function bootSpectator({canvas,ctx,world}){
   function switchCar(delta){director=false;overview=false;const order=currentOrder(),index=order.findIndex(c=>c.id===followedId);followedId=order[(index+delta+order.length)%order.length].id;saveLiveView();hud();}
   $('#previous-car').onclick=()=>switchCar(-1);$('#next-car').onclick=()=>switchCar(1);$('#camera-mode').onclick=()=>{overview=!overview;saveLiveView();hud();};
   $('#leaderboard').onclick=e=>{const b=e.target.closest('[data-follow]');if(b){director=false;followedId=b.dataset.follow;saveLiveView();hud();}};
-  function loadSession(pack){weekendUI.hide();race=pack.session;cars=pack.cars;state='racing';paused=false;finished=false;elapsed=pack.elapsed??0;checkpointTime=elapsed;count=pack.resumed||race.type!=='race'?0:3;overview=false;followedId=managerMode?cars.find(c=>c.team.id===manager.state.selectedTeam)?.id??cars[0].id:cars.find(c=>c.id===watch.state.liveView?.followedId)?.id??cars[0].id;if(!managerMode){director=watch.state.liveView?.director??true;overview=watch.state.liveView?.overview??false;}
+  function loadSession(pack){weekendUI.hide();race=pack.session;cars=pack.cars;state='racing';paused=false;finished=false;elapsed=pack.elapsed??0;checkpointTime=elapsed;count=pack.resumed||race.type!=='race'?0:3;overview=false;followedId=managerMode?(pack.resumed&&cars.find(c=>c.id===manager.state.liveView?.followedId)?.id)||cars.find(c=>c.team.id===manager.state.selectedTeam&&c.slot===pitSlot)?.id||cars[0].id:cars.find(c=>c.id===watch.state.liveView?.followedId)?.id??cars[0].id;if(!managerMode){director=watch.state.liveView?.director??true;overview=watch.state.liveView?.overview??false;}
     document.body.classList.add('racing');document.body.classList.remove('grid-summary');$('#race-results').classList.remove('qualifying-grid');$('#hud').hidden=false;$('#modal').hidden=true;camera.x=followed().x;camera.y=followed().y;camera.zoom=view.w<600?CAMERA_ZOOM.mobile:CAMERA_ZOOM.desktop;hud();saveLiveView();if(sound)audio?.resume();}
   function start(){if(route.mode!=='watch'){location.href=circuitUrl(CIRCUIT.id,'watch');return;}managerMode=false;if(!watch.state){watch=createManagerController({getItem:()=>null,setItem:watchStorage.setItem},watchOptions);watch.create('aurora','Aurora Racing');}restorePresentation(watch);$('#live-manager').hidden=true;}
   function saveLiveView(){if(state==='racing')activeController().view('live',{paused,followedId,director,overview});}
-  function openScreen(screen,options={}){engineerRadio.hidden=true;paused=true;state='weekend';$('#modal').hidden=true;$('#hud').hidden=true;document.body.classList.remove('racing','qualifying','grid-summary');watchUI.update({active:false});weekendUI.show(screen,options);}
+  function openScreen(screen,options={}){engineerRadio.hidden=true;pitWall.hidden=true;paused=true;state='weekend';$('#modal').hidden=true;$('#hud').hidden=true;document.body.classList.remove('racing','qualifying','grid-summary');watchUI.update({active:false});weekendUI.show(screen,options);}
   function restorePresentation(ctl){const saved=ctl.state.presentation?.circuit===CIRCUIT.id?ctl.state.presentation:null;if(saved?.screen==='live'&&ctl.state.active?.checkpoints){const wasPaused=!!saved.paused;resumeSession();paused=wasPaused;saveLiveView();hud();return;}if(saved?.screen==='grid'&&ctl.state.active?.phase==='race'){weekendAction('start-grid');return;}openScreen(saved?.screen??'hub',saved??{});}
   function resumeSession(){const ctl=activeController(),phase=ctl.state?.active?.phase;if(phase==='practiceReview'){openScreen('practice-report');return;}if(phase==='qualifyingReview'){openScreen('qualifying-report');return;}const pack=ctl.recover();loadSession(pack);if(sessionComplete(cars))finish();}
   async function navigateStage(id){const ctl=activeController();if(await ctl.retrySave()===false){weekendUI.error('O save ainda não foi gravado. Exporte uma cópia ou tente salvar novamente antes de trocar de pista.');return;}location.href=circuitUrl(id,managerMode?'manager':'watch');}
-  function weekendAction(action){const ctl=activeController();if(['resume','back-live','start-practice','start-qualifying','start-grid'].includes(action)&&ctl.state.active&&ctl.state.active.circuit!==CIRCUIT.id){location.href=circuitUrl(ctl.state.active.circuit,managerMode?'manager':'watch');return;}
-    if(action.startsWith('simulate-')){const type=action.slice(9);weekendAction(type==='race'?'start-grid':type==='qualifying'?'start-qualifying':'start-practice');if(state==='presentation')weekendAction('skip-grid');simulateSession();return;}
+  function weekendAction(action,args){const ctl=activeController();if(['resume','back-live','start-practice','start-qualifying','start-grid'].includes(action)&&ctl.state.active&&ctl.state.active.circuit!==CIRCUIT.id){location.href=circuitUrl(ctl.state.active.circuit,managerMode?'manager':'watch');return;}
+    if(action.startsWith('simulate-')){const type=action.slice(9);weekendAction(type==='race'?'start-grid':type==='qualifying'?'start-qualifying':'start-practice',args);if(state==='presentation')weekendAction('skip-grid');simulateSession();return;}
     if(['hub','practice-report','qualifying-report','race-report','brief-practice','brief-qualifying','brief-race'].includes(action)){openScreen(action);return;}
     if(action==='manager'||action.startsWith('manager-')){const [tab,slot]=action.slice(8).split('-');managerUI.show(action==='manager'?undefined:tab,slot===undefined?undefined:Number(slot));return;}
     if(action==='resume'||action==='back-live'){resumeSession();return;}
-    if(action==='start-practice'){loadSession(ctl.state.active?.phase==='practice'&&ctl.state.active.checkpoints?ctl.recover():ctl.begin());return;}
+    if(action==='start-practice'){loadSession(ctl.state.active?.phase==='practice'&&ctl.state.active.checkpoints?ctl.recover():ctl.begin(args));return;}
     if(action==='start-qualifying'){loadSession(ctl.state.active?.phase==='qualifying'?ctl.recover():ctl.toQualifying());return;}
     if(action==='start-grid'){
       if(state==='presentation')return;
@@ -140,7 +178,7 @@ export async function bootSpectator({canvas,ctx,world}){
   $('#start').onclick=start;$('#restart').onclick=()=>resumeSession();$('#pause').onclick=pause;$('#resume').onclick=()=>pause();$('#home').onclick=()=>openScreen('hub');
   $('#weather-mode').onclick=()=>{const modes=['auto','dry','rain'];race.weather=modes[(modes.indexOf(race.weather)+1)%3];event(race,null,'Clima: '+({auto:'variável',dry:'seco fixo',rain:'chuva fixa'}[race.weather]));hud();};
   $('#race-speed').onclick=()=>{raceSpeed=raceSpeed===4?1:raceSpeed*2;hud();};
-  addEventListener('keydown',e=>{if(sessionWorker||e.defaultPrevented||e.repeat||!$('#paddock').hidden||managerUI.isOpen()||weekendUI.isOpen)return;if(state!=='racing')return;if(['ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();if(e.code==='KeyP'||e.code==='Space'||e.code==='Escape')pause();if(e.code==='KeyR')loadSession(activeController().begin());if(e.code==='KeyC'){overview=!overview;hud();}if(e.code==='ArrowLeft')switchCar(-1);if(e.code==='ArrowRight')switchCar(1);});
+  addEventListener('keydown',e=>{if(sessionWorker||e.defaultPrevented||e.repeat||!$('#paddock').hidden||managerUI.isOpen()||weekendUI.isOpen)return;if(state!=='racing'||e.target.closest?.('input,select,textarea')||(e.code==='Space'&&e.target.closest?.('button,summary')))return;if(['ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();if(e.code==='KeyP'||e.code==='Space'||e.code==='Escape')pause();if(e.code==='KeyR')loadSession(activeController().begin());if(e.code==='KeyC'){overview=!overview;hud();}if(e.code==='ArrowLeft')switchCar(-1);if(e.code==='ArrowRight')switchCar(1);});
   // Pause when the tab loses focus so a background race is not missed.
   addEventListener('blur',()=>{if(state==='racing'&&!paused&&!finished)pause();});
   $('#sound').onclick=()=>{sound=!sound;$('#sound').textContent=sound?'SOM ON':'SOM OFF';if(sound&&!audio){audio=new AudioContext();osc=audio.createOscillator();gain=audio.createGain();const filter=audio.createBiquadFilter();osc.type='sawtooth';filter.type='lowpass';filter.frequency.value=430;osc.connect(filter);filter.connect(gain);gain.connect(audio.destination);gain.gain.value=0;osc.start();}if(sound)audio.resume();};

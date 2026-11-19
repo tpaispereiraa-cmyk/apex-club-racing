@@ -8,7 +8,7 @@ import {managedStrategy,applyRaceCommands} from './manager/race-control.js';
 import {createField,simulateField} from './race-ai.js';
 import {startingGrid} from './teams.js';
 import {createRace,updateWeather} from './race-systems.js';
-import {length} from './track.js';
+import {at,CIRCUIT,length} from './track.js';
 import {weatherForecast} from './weather.js';
 import {simulateRemaining} from './session-worker.js';
 function pack(){const state=createCareer('cobalto'),session=createRace({type:'race',laps:8,weather:'dry'}),cars=createField(session,null,prepareEntries(state,startingGrid()));return{state,session,cars};}
@@ -54,4 +54,96 @@ test('resources and classified distance freeze at the flag while the car coasts 
 test('ordinary engine wear does not repeatedly call a managed car for an impossible repair',()=>{
   const {cars,session}=pack(),c=cars.find(c=>c.team.id==='cobalto'&&c.slot===0);c.engineHealth=70;c.manager.strategy={compound:'medium',stops:[],rules:[]};c.errorCooldown=100;
   simulateField([c],1/30,1,session);assert.equal(c.pitRequested,false);assert.equal(c.retired,false);
+});
+
+test('scheduled stops remain pending until service and are made on their planned entry laps',()=>{
+  const {cars,session}=pack(),car=cars.find(c=>c.team.id==='cobalto'&&c.slot===0);
+  car.manager.strategy={compound:'medium',stops:[{lap:3,compound:'hard'},{lap:5,compound:'medium'}],rules:[]};
+  car.errorCooldown=10000;
+  const dt=1/30;
+  let observedRequest=false;
+  for(let t=dt;t<1200&&car.finishTime===null;t+=dt){
+    simulateField([car],dt,t,session);
+    if(car.pitRequested&&car.manager.pitCall?.source==='plan'){
+      assert.ok(!car.manager.usedStops.includes(car.manager.pitCall.planIndex));
+      observedRequest=true;
+    }
+  }
+  assert.ok(observedRequest);
+  assert.notEqual(car.finishTime,null);
+  assert.deepEqual(car.manager.usedStops,[0,1]);
+  assert.deepEqual(car.pitHistory.map(p=>[p.calledLap,p.entryLap,p.compound,p.source]),[
+    [3,3,'hard','plan'],[5,5,'medium','plan']
+  ]);
+});
+
+test('Keep Out delays a scheduled stop for the lap and Pit Now can confirm the same stop',()=>{
+  const {cars,session}=pack(),car=cars.find(c=>c.team.id==='cobalto'&&c.slot===0);
+  car.manager.strategy={compound:'medium',stops:[{lap:3,compound:'hard'}],rules:[]};
+  car.lap=3;
+  managedStrategy(car,session,cars);
+  assert.equal(car.manager.pitCall.source,'plan');
+  applyRaceCommands(cars,[{type:'keepOut',teamId:'cobalto',slot:0,sequence:1}],session);
+  managedStrategy(car,session,cars);
+  assert.equal(car.pitRequested,false);
+  assert.deepEqual(car.manager.usedStops,[]);
+  car.lap=4;
+  managedStrategy(car,session,cars);
+  assert.equal(car.manager.pitCall.calledLap,4);
+  applyRaceCommands(cars,[{type:'box',compound:'soft',teamId:'cobalto',slot:0,sequence:2}],session);
+  assert.equal(car.manager.pitCall.source,'manual');
+  assert.equal(car.manager.pitCall.compound,'soft');
+  assert.equal(car.manager.pitCall.planIndex,0);
+});
+
+test('rain defers a dry plan and critical damage overrides a Keep Out order',()=>{
+  const {cars,session}=pack(),car=cars.find(c=>c.team.id==='cobalto'&&c.slot===0);
+  car.manager.strategy={compound:'medium',stops:[{lap:3,compound:'hard'}],rules:[]};
+  car.lap=3;
+  session.wetness=.5;
+  managedStrategy(car,session,cars);
+  assert.equal(car.pitRequested,false);
+  assert.match(car.manager.pitNotice,/aguarda a pista secar/);
+  session.wetness=0;
+  managedStrategy(car,session,cars);
+  applyRaceCommands(cars,[{type:'keepOut',teamId:'cobalto',slot:0,sequence:1}],session);
+  assert.equal(car.pitRequested,false);
+  car.damage=20;
+  simulateField([car],1/30,2,session);
+  assert.equal(car.manager.pitCall.source,'safety');
+  applyRaceCommands(cars,[{type:'keepOut',teamId:'cobalto',slot:0,sequence:2}],session);
+  assert.equal(car.pitRequested,true);
+});
+
+test('a lapped car gives space and slows down before the leader reaches it',()=>{
+  const {cars,session}=pack(),[lead,lapped]=cars;
+  for(const [c,s] of [[lead,length+3600],[lapped,4050]]){
+    Object.assign(c,{s,progress:s,v:240,lane:0,laneTarget:0,errorCooldown:1000,decisionCooldown:1000},at(s,0));
+  }
+  const dt=1/60;
+  for(let t=dt;t<=5;t+=dt)simulateField([lead,lapped],dt,12+t,session);
+  assert.ok(lead.s-length>lapped.s);
+  assert.equal(lead.metrics.contacts,0);
+  assert.equal(lapped.metrics.contacts,0);
+});
+
+test('an extra practice run only spends the selected car’s tyres and kilometres',()=>{
+  const ctl=createManagerController({getItem:()=>null,setItem:()=>{}});
+  ctl.create('cobalto','Teste de treino');
+  ctl.state.calendar[0]=CIRCUIT.id;
+  const first=ctl.begin();
+  for(const c of first.cars)c.finishTime=100;
+  ctl.finishPractice(first.cars);
+  const before=structuredClone(ctl.state.teams.cobalto.cars);
+  const {cars,session}=ctl.begin({slot:1,laps:1,compound:'hard'});
+  assert.equal(session.laps,1);
+  assert.equal(cars.length,1);
+  assert.equal(cars[0].slot,1);
+  assert.equal(cars[0].compound,'hard');
+  cars[0].finishTime=100;
+  cars[0].lapTimes.push(65);
+  ctl.finishPractice(cars);
+  assert.deepEqual(ctl.state.teams.cobalto.cars[0],before[0]);
+  assert.equal(ctl.state.teams.cobalto.cars[1].tyres.hard,before[1].tyres.hard-1);
+  assert.ok(ctl.state.teams.cobalto.cars[1].practice.km>before[1].practice.km);
 });

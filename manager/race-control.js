@@ -1,3 +1,4 @@
+import {queuePit,keepOut,pendingPlan} from './pit-calls.js';
 import {clamp,pitProfile} from './model.js';
 export const MODEL_UNITS={speed:'m/s',mass:'kg',power:'W',energy:'J',temperature:'°C'};
 // Rendering scale is an adapter only. The manager model uses physical units.
@@ -52,14 +53,53 @@ export function managedSystems(c,race,dt,{throttle=0,braking=0,corner=0,ers=fals
   m.fuelUsed=(m.fuelUsed??0)+previousFuel-c.fuel;m.tyreConsumed=(m.tyreConsumed??0)+previousLife-c.tyreLife;
   c.telemetry={...c.telemetry,throttle,braking,corner,orders:{...o},frontTemp:m.frontTemp,rearTemp:m.rearTemp,brakeTemp:m.brakeTemp,confidence:p.confidence,reason:m.reason};
 }
-export function applyRaceCommands(cars,commands,race=null){for(const command of commands){const c=cars.find(c=>c.manager?.slot===command.slot&&c.manager.teamId===command.teamId);if(!c||c.retired||c.finishTime!==null||command.sequence<=c.manager.commandSequence)continue;if(command.type==='orders'){c.manager.orderHistory??=[];c.manager.orderHistory.push({time:race?.elapsed??null,lap:c.lap,patch:{...command.patch},fuel:c.fuel,tyreLife:c.tyreLife,energy:c.energy,sequence:command.sequence});Object.assign(c.manager.orders,command.patch);c.manager.reason='Instrução do manager';}else if(command.type==='box'){c.pitRequested=true;c.pitReason='ordem do manager';c.manager.requestedCompound=command.compound;}c.manager.commandSequence=command.sequence;}}
+export function applyRaceCommands(cars,commands,race=null){
+  for(const command of commands){
+    const c=cars.find(c=>c.manager?.slot===command.slot&&c.manager.teamId===command.teamId);
+    if(!c||c.retired||c.finishTime!==null||command.sequence<=c.manager.commandSequence)continue;
+    const m=c.manager;
+    if(command.type==='orders'){
+      m.orderHistory??=[];
+      m.orderHistory.push({time:race?.elapsed??null,lap:c.lap,patch:{...command.patch},fuel:c.fuel,tyreLife:c.tyreLife,energy:c.energy,sequence:command.sequence});
+      Object.assign(m.orders,command.patch);
+      m.reason='Instrução do manager';
+    }else if(command.type==='box'&&m.tyreStock[command.compound]>0){
+      const scheduled=pendingPlan(c);
+      const planIndex=scheduled?.lap<=c.lap?scheduled.index:undefined;
+      queuePit(c,{source:'manual',reason:'ordem do manager',compound:command.compound,planIndex});
+    }else if(command.type==='keepOut'){
+      keepOut(c);
+    }
+    m.commandSequence=command.sequence;
+  }
+}
 export function managedStrategy(c,race,cars){if(!c.manager||c.pit||c.retired||c.finishTime!==null)return;const m=c.manager,plan=m.strategy;
   if(m.temporaryOrder&&c.lap>m.temporaryOrder.lap){Object.assign(m.orders,m.temporaryOrder.previous);m.temporaryOrder=null;}
-  for(const [index,stop]of plan.stops.entries())if(c.lap>=stop.lap&&!m.usedStops.includes(index)&&race.type==='race'){c.pitRequested=true;c.pitReason='parada planejada';m.requestedCompound=stop.compound;m.usedStops.push(index);}
+  const stop = pendingPlan(c);
+  if (race.type === 'race' && stop && c.lap >= stop.lap && !c.pitRequested && m.keepOutLap !== c.lap) {
+    if (!m.tyreStock[stop.compound]) {
+      m.skippedStops ??= [];
+      m.skippedStops.push(stop.index);
+      m.pitNotice = `Parada da V${stop.lap} indisponível. Estoque de ${stop.compound} esgotado.`;
+    } else {
+      const dryTyre = ['soft','medium','hard'].includes(stop.compound);
+      if (!dryTyre || race.wetness < .3) queuePit(c, {source:'plan', reason:'parada planejada', compound:stop.compound, planIndex:stop.index});
+      else m.pitNotice = `Parada da V${stop.lap} aguarda a pista secar.`;
+    }
+  }
   for(const[index,rule]of plan.rules.entries()){
     const match=rule.when==='wet'?race.wetness>=rule.threshold:rule.when==='dry'?race.wetness<=rule.threshold&&!['soft','medium','hard'].includes(c.compound):rule.when==='tyres'?c.tyreLife<=rule.threshold:rule.when==='energy'?c.energy<=rule.threshold:rule.when==='fuel'?c.fuel<=rule.threshold:rule.when==='rivalPit'?cars.some(o=>o.team.id!==c.team.id&&o.pit&&Math.abs(o.progress-c.progress)<600):false;
     if(!match)m.usedRules=m.usedRules.filter(i=>i!==index);
-    if(match&&!m.usedRules.includes(index)){if(rule.orders){if(rule.when==='rivalPit')m.temporaryOrder={lap:c.lap,previous:Object.fromEntries(Object.keys(rule.orders).map(k=>[k,m.orders[k]]))};Object.assign(m.orders,rule.orders);}if(rule.compound&&rule.compound!==c.compound){c.pitRequested=true;c.pitReason='regra automática: '+rule.when;m.requestedCompound=rule.compound;}m.usedRules.push(index);m.reason='Plano automático: '+rule.when;}
+    if (match && !m.usedRules.includes(index)) {
+      if (rule.compound && rule.compound !== c.compound && m.tyreStock[rule.compound] &&
+          !queuePit(c,{source:'rule',reason:'regra automática: '+rule.when,compound:rule.compound,ruleIndex:index})) continue;
+      if (rule.orders) {
+        if (rule.when==='rivalPit') m.temporaryOrder={lap:c.lap,previous:Object.fromEntries(Object.keys(rule.orders).map(k=>[k,m.orders[k]]))};
+        Object.assign(m.orders,rule.orders);
+      }
+      m.usedRules.push(index);
+      m.reason='Plano automático: '+rule.when;
+    }
   }
   if(m.orders.team==='yield'&&cars.some(o=>o.team.id===c.team.id&&o.id!==c.id&&o.s<c.s&&c.s-o.s<180))m.yielding=true;else m.yielding=false;
 }

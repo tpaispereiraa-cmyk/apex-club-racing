@@ -4,6 +4,7 @@ import {COMPOUNDS} from './race-systems.js';
 import {CIRCUIT,length,at,W,H} from './track.js';
 import {PHASES,POINTS,championshipOrder} from './tournament.js';
 import {ORDER_LABELS} from './manager/model.js';
+import {pendingPlan} from './manager/pit-calls.js';
 import {FAULT_LABELS} from './race-incidents.js';
 import {drawCar} from './car-renderer.js';
 import {updateMarkup} from './hud-view.js';
@@ -27,7 +28,7 @@ export function intervalTo(a,b){
   return `~${(distance/pace).toFixed(1)}s`;
 }
 export function stintAge(c){return Math.max(0,((Number.isFinite(c.finishTime)?c.progress??c.s:c.s)-(c.tyreFittedAtS??0))/length);}
-export function nextStop(c,race){return (c.manager?.strategy.stops??[]).find((_,i)=>!(c.manager.usedStops??[]).includes(i))??null;}
+export function nextStop(c,race){const stop=pendingPlan(c);return stop?c.manager.strategy.stops[stop.index]:null;}
 
 function sectorMap(){return `<svg class="watch-sector-map" viewBox="0 0 ${W} ${H}" role="img" aria-label="Mapa com os três setores do circuito">${SECTOR_COLORS.map((color,i)=>{const points=Array.from({length:91},(_,n)=>{const p=at((i+n/90)*length/3);return p.x+','+p.y;}).join(' '),label=at((i+.5)*length/3,100);return `<polyline points="${points}" fill="none" stroke="${color}" stroke-width="4" vector-effect="non-scaling-stroke" stroke-linejoin="round"/><text x="${label.x}" y="${label.y}" fill="${color}" font-size="${Math.max(W,H)*.04}" font-family="Arial" font-weight="bold">S${i+1}</text>`;}).join('')}</svg>`;}
 const SECTOR_MAP=sectorMap();
