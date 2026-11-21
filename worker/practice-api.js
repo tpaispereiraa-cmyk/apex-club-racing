@@ -9,15 +9,23 @@ const problem = (error, status) => json({error}, status);
 const hex = bytes => Array.from(bytes, b => b.toString(16).padStart(2,'0')).join('');
 const hash = async value => hex(new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))));
 const row = (db, sql, ...args) => db.prepare(sql).bind(...args).first();
+const lapId = id => typeof id==='string' && /^[a-f0-9-]{36}$/i.test(id);
+const findAttempt = (db,driverId,id) => row(db,'SELECT elapsed_ms FROM practice_laps WHERE driver_id=? AND lap_id=?',driverId,id);
+
+async function reserveAttempt(db,driverId,id) {
+  // Zero elapsed means the timer started and the attempt has no finish yet.
+  await db.prepare('INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid) SELECT ?,?,0,0 WHERE (SELECT count(*) FROM practice_laps WHERE driver_id=?) < ? ON CONFLICT(driver_id,lap_id) DO NOTHING').bind(driverId,id,driverId,LIMIT).run();
+  return findAttempt(db,driverId,id);
+}
 
 async function state(db, driver, closesAt, open) {
   const basic = {closesAt, open, limit:LIMIT};
   if (!driver) return {...basic, driver:null};
-  const laps = await row(db, 'SELECT count(*) AS used, min(CASE WHEN valid=1 THEN elapsed_ms END) AS best FROM practice_laps WHERE driver_id=?', driver.id);
-  const reference = await row(db, 'SELECT splits FROM practice_laps WHERE driver_id=? AND valid=1 ORDER BY elapsed_ms, splits IS NULL, lap_id LIMIT 1', driver.id);
-  const {results:history}=await db.prepare('SELECT elapsed_ms AS ms, valid, splits FROM practice_laps WHERE driver_id=? ORDER BY rowid').bind(driver.id).all();
-  const result = {...basic, driver:{name:driver.name, color:driver.color}, ...laps, bestSplits:reference?.splits?JSON.parse(reference.splits):null,
-    history:history.map(({ms,valid,splits})=>({ms,valid:!!valid,splits:splits?JSON.parse(splits):null}))};
+  const {results}=await db.prepare('SELECT elapsed_ms AS ms, valid, splits FROM practice_laps WHERE driver_id=? ORDER BY rowid').bind(driver.id).all();
+  const history=results.map(({ms,valid,splits})=>({ms:ms||null,valid:!!valid,splits:splits?JSON.parse(splits):null}));
+  const reference=history.filter(lap=>lap.valid).sort((a,b)=>a.ms-b.ms||Number(!!b.splits)-Number(!!a.splits))[0];
+  const result = {...basic, driver:{name:driver.name,color:driver.color},used:history.length,best:reference?.ms??null,
+    bestSplits:reference?.splits??null,history};
   if (!open) {
     const board = await db.prepare('SELECT d.name, d.color, count(l.lap_id) AS used, min(CASE WHEN l.valid=1 THEN l.elapsed_ms END) AS best FROM practice_drivers d LEFT JOIN practice_laps l ON d.id=l.driver_id WHERE d.event_id=? GROUP BY d.id ORDER BY best IS NULL, best, d.name_key').bind(EVENT).all();
     result.board = board.results;
@@ -62,12 +70,24 @@ export async function practiceAPI(request, env) {
 
   if (url.pathname !== '/api/practice/lap') return problem('Rota inexistente.', 404);
   if (!driver) return problem('Faça a inscrição antes de entrar na pista.', 401);
-  const {id, ms, valid, splits} = payload;
-  if (typeof id !== 'string' || !/^[a-f0-9-]{36}$/i.test(id) || !Number.isInteger(ms) || ms < 35000 || ms > 1800000 || typeof valid !== 'boolean') return problem('Tempo de volta inválido.', 400);
-  if (await row(env.DB,'SELECT 1 FROM practice_laps WHERE driver_id=? AND lap_id=?',driver.id,id)) return json(await state(env.DB,driver,closesAt,open));
-  if (!open) return problem('O treino encerrou antes de receber essa volta.', 410);
+  const {id, ms, valid, splits, nextId} = payload;
+  if (!lapId(id)) return problem('Identificador de volta inválido.',400);
+  if (payload.start===true) {
+    if (!open) return problem('O treino já encerrou.',410);
+    const attempt=await reserveAttempt(env.DB,driver.id,id);
+    if (!attempt) return problem('Limite de 30 voltas atingido.',409);
+    return json({...await state(env.DB,driver,closesAt,open),attemptId:attempt.elapsed_ms===0?id:null});
+  }
+
+  if (!Number.isInteger(ms) || ms < 35000 || ms > 1800000 || typeof valid !== 'boolean') return problem('Tempo de volta inválido.',400);
+  if (nextId!=null&&(!lapId(nextId)||nextId===id)) return problem('Próxima volta inválida.',400);
   if (splits!=null&&(!Array.isArray(splits)||splits.length!==3||!splits.every(Number.isSafeInteger)||splits[0]<=0||splits[1]<=splits[0]||splits[2]<=splits[1]||splits[2]!==ms))return problem('Parciais inválidas.',400);
-  await env.DB.prepare('INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid,splits) SELECT ?,?,?,?,? WHERE (SELECT count(*) FROM practice_laps WHERE driver_id=?) < ? ON CONFLICT(driver_id,lap_id) DO NOTHING').bind(driver.id,id,ms,Number(valid),splits?JSON.stringify(splits):null,driver.id,LIMIT).run();
-  if (!await row(env.DB,'SELECT 1 FROM practice_laps WHERE driver_id=? AND lap_id=?',driver.id,id)) return problem('Limite de 30 voltas atingido.', 409);
-  return json(await state(env.DB,driver,closesAt,open));
+  const attempt=await findAttempt(env.DB,driver.id,id);
+  if (!attempt) return problem('Essa tentativa não foi iniciada. Recarregue a página para começar outra volta.',409);
+  if (attempt.elapsed_ms===0) {
+    if (!open) return problem('O treino encerrou antes de receber essa volta.',410);
+    await env.DB.prepare('UPDATE practice_laps SET elapsed_ms=?,valid=?,splits=? WHERE driver_id=? AND lap_id=? AND elapsed_ms=0').bind(ms,Number(valid),splits?JSON.stringify(splits):null,driver.id,id).run();
+  }
+  const next=nextId&&open?await reserveAttempt(env.DB,driver.id,nextId):null;
+  return json({...await state(env.DB,driver,closesAt,open),attemptId:next?.elapsed_ms===0?nextId:null});
 }

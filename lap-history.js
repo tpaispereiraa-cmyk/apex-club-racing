@@ -12,7 +12,7 @@ export function lapHistoryTable(rows, format) {
   });
   return `<div class="lap-history-wrap"><table class="lap-history-table">
     <thead><tr><th>Volta</th><th>Tempo</th><th>S1</th><th>S2</th><th>S3</th></tr></thead>
-    <tbody>${rows.map((row,i)=>`<tr><th scope="row">V${row.lap??i+1}${row.valid===false?' <small>Inválida</small>':''}</th>${columns[i].map((time,j)=>{
+    <tbody>${rows.map((row,i)=>`<tr><th scope="row">V${row.lap??i+1}${row.ms==null?' <small>Sem tempo</small>':row.valid===false?' <small>Inválida</small>':''}</th>${columns[i].map((time,j)=>{
       const {min,max}=ranges[j];
       const mark=row.valid===false?'':time===min?'best':time===max?'worst':'';
       return `<td data-lap-mark="${mark}"${mark?` title="${mark==='best'?'Melhor':'Pior'} tempo da coluna"`:''}>${time==null?'—':format(time)}</td>`;

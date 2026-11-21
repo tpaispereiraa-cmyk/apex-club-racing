@@ -15,7 +15,7 @@ function writeLocal(key, value) { try {localStorage.setItem(key,JSON.stringify(v
 
 async function getState(path='', data) {
   const response = await fetch('/api/practice'+path,data ? {
-    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data)
+    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data),keepalive:true
   } : {cache:'no-store'});
   const result = await response.json().catch(()=>null);
   if (!response.ok || !result) {
@@ -44,7 +44,7 @@ export function bootPilot({canvas,ctx,world}) {
         <div id="pilot-setup" hidden><h2 id="pilot-driver"></h2><p>Escolha um acerto para a próxima saída.</p><div class="pilot-presets" role="group" aria-label="Acertos sugeridos">${Object.entries(PRESETS).map(([id,p])=>`<button data-preset="${id}" aria-pressed="false"><b>${p.name}</b><small>${p.description}</small></button>`).join('')}</div>
         <details><summary>Configuração avançada</summary><div class="pilot-sliders">${PILOT_SETUP.map(id=>{const s=SETUP[id];return `<label><span>${s.label} <output></output></span><input type="range" name="${id}" min="${s.min}" max="${s.max}" step="${s.step}"></label>`;}).join('')}</div></details>
         <div class="pilot-start-options"><button class="pilot-button" data-pilot-start="pits">Sair dos boxes</button><button class="pilot-button" data-pilot-start="flying">Iniciar volta rápida</button></div>
-        <p class="pilot-start-note">Na volta rápida você começa antes da última curva. O tempo começa na linha.</p>
+        <p class="pilot-start-note">Na volta rápida você começa antes da última curva. Ao cruzar a linha, o cronômetro começa e a tentativa conta na cota.</p>
         <p class="pilot-controls"><kbd>W</kbd> acelerar <kbd>A</kbd><kbd>D</kbd> virar <kbd>S</kbd> frear <kbd>E</kbd> DRS · Scroll para ajustar o zoom</p></div>
         <section id="pilot-results" hidden><h2>Tempos do treino</h2><ol></ol></section>
         <button id="pilot-retry" class="pilot-button" hidden>Tentar novamente</button>
@@ -85,6 +85,7 @@ export function bootPilot({canvas,ctx,world}) {
   }
   if (draft.preset==='manual') preset='manual';
   let state=null, car=null, latest=null, pending=readLocal(pendingKey), saving=false, busy=false;
+  let attemptId=null;
   let last=0, accumulator=0, camera=null, width=0, height=0, density=1, zoomFactor=1;
   const elapsed = ()=>car?.start == null ? null : Math.round((car.elapsed-car.start)*1000);
   const message = value => {$('.pilot-message').textContent=value;};
@@ -110,7 +111,7 @@ export function bootPilot({canvas,ctx,world}) {
     $('#pilot-quota').textContent=$('#pilot-live-quota').textContent=`${used} / ${limit}`;
     $('#pilot-best').textContent=format(best);
     const lastLap=latest??state.history?.at(-1);
-    $('#pilot-last').textContent=format(lastLap?.ms)+(lastLap&&!lastLap.valid?' · inválida':'');
+    $('#pilot-last').textContent=lastLap?.ms==null?'—':format(lastLap.ms)+(!lastLap.valid?' · inválida':'');
     form.hidden=!!driver || !open;
     $('#pilot-setup').hidden=!driver || !open;
     $('#pilot-driver').textContent=driver?.name ?? '';
@@ -143,21 +144,22 @@ export function bootPilot({canvas,ctx,world}) {
   }
   function leave() {
     car=null; track.hidden=true; garage.hidden=false;
+    attemptId=null;
     keys.clear(); touches.clear();
     last=0; accumulator=0; showState();
   }
   async function saveLap() {
     if (!pending || saving) return;
     saving=true;
-    radio('Gravando volta…');
+    radio(pending.start?'Registrando início da volta…':'Gravando volta…');
     try {
       state=await getState('/lap',pending);
-      if(car)car.bestSplits=state.bestSplits??null;
+      if(car){car.bestSplits=state.bestSplits??null;attemptId=state.attemptId??null;}
       pending=null;writeLocal(pendingKey,null);
       message('');
-      if(!state.open || state.used>=state.limit) {
+      if(!state.open || !attemptId&&(car||state.used>=state.limit)) {
         leave();
-        message(state.open?'Você completou suas 30 voltas.':'O treino encerrou.');
+        message(!state.open?'O treino encerrou.':state.used>=state.limit?'Você usou suas 30 tentativas.':'A tentativa já foi finalizada.');
       }
       showState();
     } catch(error) {
@@ -165,6 +167,11 @@ export function bootPilot({canvas,ctx,world}) {
       leave();message(error.message);
       if(!pending)await refresh();
     } finally {saving=false;accumulator=0;}
+  }
+  function submitLap(operation) {
+    pending=operation;
+    writeLocal(pendingKey,pending);
+    saveLap();
   }
   const params=new URLSearchParams(location.hash.slice(1));
   form.elements.invite.value=params.get('convite') ?? '';
@@ -263,13 +270,13 @@ export function bootPilot({canvas,ctx,world}) {
         const input=Object.fromEntries([...pressed].map(key=>[key,true]));
         while(car&&accumulator>=PILOT_STEP&&!saving) {
           accumulator-=PILOT_STEP;
+          const before=car.start;
           const lap=stepPilot(car,input);
           if(lap) {
             latest=lap;
-            pending={...lap,id:crypto.randomUUID()};
-            writeLocal(pendingKey,pending);
-            saveLap();
-          }
+            const nextId=state.used<state.limit?crypto.randomUUID():null;
+            submitLap({...lap,id:attemptId,nextId});
+          }else if(before===null&&car.start!==null)submitLap({start:true,id:crypto.randomUUID()});
         }
       }
       if(car) {
