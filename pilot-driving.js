@@ -1,6 +1,6 @@
 import {at, nearest, mod, clamp, length, ROAD, CIRCUIT} from './track.js';
 import {PIT_LAYOUT, pitPoint} from './pit-layout.js';
-import {drsZoneAt} from './track-profile.js';
+import {drsZoneAt, FLYING_START} from './track-profile.js';
 import {createCareer} from './manager/career.js';
 import {defaultSetup, deriveCar, SETUP} from './manager/model.js';
 import {physicalForces, unitAdapter} from './manager/race-control.js';
@@ -19,12 +19,14 @@ const fixedStep = 1/60;
 export const PILOT_STEP = fixedStep;
 const base = createCareer('aurora','APEX Practice');
 
-export function makePilotCar(setup,color,bestSplits=null) {
+export function makePilotCar(setup,color,bestSplits=null,startMode='pits') {
   base.teams.aurora.cars[0].setup = {...setup};
-  const s = length+PIT_LAYOUT.exit-270;
-  return {...pitPoint(s), s, pit:true, v:0, steer:0, slip:0, drs:false, off:false,
+  const flying=startMode==='flying';
+  const s=flying?FLYING_START:length+PIT_LAYOUT.exit-270;
+  const pose=flying?at(s):pitPoint(s);
+  return {...pose, s, pit:!flying, v:flying?22:0, steer:0, slip:0, drs:false, off:false,
     team:{color:'#223037',secondary:'#10191c',accent:color}, compound:'medium', number:1,
-    model:deriveCar(base,'aurora',0), elapsed:0, progress:0, sector:0, gate:0,
+    model:deriveCar(base,'aurora',0), elapsed:0, startMode, progress:flying?s:0, sector:flying?8:0, gate:0,
     start:null, invalid:false, safeS:s, bestSplits, splits:[], lastSplits:[], nextSplit:null};
 }
 

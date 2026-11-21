@@ -28,6 +28,9 @@
 #pilot-register input[type=color] { width: 4rem; padding: .2rem; }
 .pilot-button { display: block; width: 100%; font-weight: 800; font-size: 1rem; color: #142014; background: var(--lime); padding: .85rem 1rem; border: 0; }
 .pilot-button:disabled { opacity: .5; cursor: default; }
+.pilot-start-options { display: grid; grid-template-columns: 1fr 1fr; gap: .55rem; }
+.pilot-start-options [data-pilot-start=pits] { border: 1px solid #a1b49580; background: #1e3026; color: #e1ecd9; }
+#pilot .pilot-start-note { font-size: .85rem; margin-bottom: .5rem; }
 .pilot-presets { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
 .pilot-presets button, .pilot-drive-actions button { border: 1px solid #bbcdb940; background: #182923; padding: .7rem; color: #f3f7f0; font-size: .9rem; text-align: left; }
 .pilot-presets small { display: block; color: #b8caba; line-height: 1.4; margin-top: .2rem; font-size: .8rem; }

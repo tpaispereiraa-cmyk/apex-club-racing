@@ -25,3 +25,14 @@ export const inInterval=(s,start,end)=>{s=mod(s,length);return start<end?s>=star
 export const drsZoneAt=s=>DRS_ZONES.findIndex(z=>inInterval(s,z.start,z.end));
 export function crosses(from,to,marker){if(to<=from)return false;return Math.floor((from-marker)/length)<Math.floor((to-marker)/length);}
 export const PIT={entry:PIT_LAYOUT.entry,exit:PIT_LAYOUT.exit};
+
+// Leave enough room to take the final bend before the timing line.
+export const FLYING_START=(()=>{
+  const runUp=clamp(length*.08,720,1400);
+  for(let s=-100;s>=-length*.24;s-=STEP){
+    const turn=Math.abs(angleDelta(at(s+85).angle,at(s-85).angle));
+    if(turn>.16)return Math.min(-runUp,s-350);
+  }
+  return -runUp;
+})();
+export const TIMED_PIT_RELEASE=-length+PIT.exit-270;

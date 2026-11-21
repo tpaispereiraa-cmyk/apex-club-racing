@@ -37,9 +37,9 @@ test('invitation, isolated drivers, atomic quota, retries and deadline',async()=
   assert.equal((await (await send('',null,cookie)).json()).board[0].best,87000);
 });
 
-test('WASD can exit the pit and complete a clean lap after the outlap',()=>{
-  const car=makePilotCar(setupFor('balanced'),'#ff55ee');
-  assert.equal(car.pit,true);assert.equal(car.start,null);
+for(const startMode of ['pits','flying'])test(`WASD starts from ${startMode} and clocks two full laps`,()=>{
+  const car=makePilotCar(setupFor('balanced'),'#ff55ee',null,startMode);
+  assert.equal(car.pit,startMode==='pits');assert.equal(car.start,null);
   const angle=x=>Math.atan2(Math.sin(x),Math.cos(x));
   const laps=[];
   let exit;
@@ -54,6 +54,8 @@ test('WASD can exit the pit and complete a clean lap after the outlap',()=>{
   }
   const [{lap,display},second]=laps;
   assert.ok(exit<6);
+  const firstLine=car.start-lap.ms/1000-second.lap.ms/1000;
+  assert.ok(startMode==='flying'?firstLine<18:firstLine>60);
   assert.ok(lap?.valid);
   assert.ok(lap.ms>80000 && lap.ms<95000);
   assert.equal(lap.splits.at(-1),lap.ms);

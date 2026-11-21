@@ -41,7 +41,9 @@ export function bootPilot({canvas,ctx,world}) {
         <form id="pilot-register" hidden><h2>Inscrição de piloto</h2><label>Seu nome<input name="name" autocomplete="nickname" minlength="2" maxlength="32" required></label><label>Código do convite<input name="invite" autocomplete="off" required></label><label class="pilot-color">Cor de destaque<input type="color" name="color" value="#d5f561"></label><button class="pilot-button">Entrar no treino</button></form>
         <div id="pilot-setup" hidden><h2 id="pilot-driver"></h2><p>Escolha um acerto para a próxima saída.</p><div class="pilot-presets" role="group" aria-label="Acertos sugeridos">${Object.entries(PRESETS).map(([id,p])=>`<button data-preset="${id}" aria-pressed="false"><b>${p.name}</b><small>${p.description}</small></button>`).join('')}</div>
         <details><summary>Configuração avançada</summary><div class="pilot-sliders">${PILOT_SETUP.map(id=>{const s=SETUP[id];return `<label><span>${s.label} <output></output></span><input type="range" name="${id}" min="${s.min}" max="${s.max}" step="${s.step}"></label>`;}).join('')}</div></details>
-        <button id="pilot-start" class="pilot-button">Iniciar treino</button><p class="pilot-controls"><kbd>W</kbd> acelerar <kbd>A</kbd><kbd>D</kbd> virar <kbd>S</kbd> frear <kbd>E</kbd> DRS</p></div>
+        <div class="pilot-start-options"><button class="pilot-button" data-pilot-start="pits">Sair dos boxes</button><button class="pilot-button" data-pilot-start="flying">Iniciar volta rápida</button></div>
+        <p class="pilot-start-note">Na volta rápida você começa antes da última curva. O tempo começa na linha.</p>
+        <p class="pilot-controls"><kbd>W</kbd> acelerar <kbd>A</kbd><kbd>D</kbd> virar <kbd>S</kbd> frear <kbd>E</kbd> DRS</p></div>
         <section id="pilot-results" hidden><h2>Tempos do treino</h2><ol></ol></section>
         <button id="pilot-retry" class="pilot-button" hidden>Tentar novamente</button>
       </section>
@@ -108,7 +110,7 @@ export function bootPilot({canvas,ctx,world}) {
     form.hidden=!!driver || !open;
     $('#pilot-setup').hidden=!driver || !open;
     $('#pilot-driver').textContent=driver?.name ?? '';
-    $('#pilot-start').disabled=!open || used>=limit || !!pending;
+    for(const button of ui.querySelectorAll('[data-pilot-start]'))button.disabled=!open||used>=limit||!!pending;
     $('#pilot-retry').hidden=!pending;
     const results=$('#pilot-results');
     results.hidden=!state.board;
@@ -173,7 +175,7 @@ export function bootPilot({canvas,ctx,world}) {
     if (!PILOT_SETUP.includes(e.target.name)) return;
     preset='manual';setup[e.target.name]=Number(e.target.value);syncSetup();
   });
-  $('#pilot-start').addEventListener('click',async ()=>{
+  async function startDriving(mode) {
     if(busy || pending) return;
     if(wantsSound)setSound(true);
     busy=true;
@@ -182,13 +184,14 @@ export function bootPilot({canvas,ctx,world}) {
       state=await getState();
       showState();
       if(!state.driver || !state.open || state.used>=state.limit)return;
-      car=makePilotCar(setup,state.driver.color,state.bestSplits??null);
+      car=makePilotCar(setup,state.driver.color,state.bestSplits??null,mode);
       camera=null;accumulator=0;last=0;
       garage.hidden=true;track.hidden=false;
-      radio('Segure W para sair dos boxes.');
+      radio(car.pit?'Segure W para sair dos boxes.':'Cruze a linha para iniciar a volta rápida.');
     } catch(error){message(error.message);}
     finally {busy=false;}
-  });
+  }
+  for(const button of ui.querySelectorAll('[data-pilot-start]'))button.onclick=()=>startDriving(button.dataset.pilotStart);
   $('#pilot-retry').onclick=()=>pending?saveLap():refresh();
   track.addEventListener('click',e=>{
     if(e.target.dataset.action==='garage') {if(!saving)leave();}
@@ -250,7 +253,7 @@ export function bootPilot({canvas,ctx,world}) {
         }
       }
       if(car) {
-        $('#pilot-phase').textContent=car.pit?'PIT LANE':car.start===null?'VOLTA DE SAÍDA':'VOLTA RÁPIDA';
+        $('#pilot-phase').textContent=car.pit?'PIT LANE':car.start!==null?'VOLTA RÁPIDA':car.startMode==='flying'?'APROXIMAÇÃO':'VOLTA DE SAÍDA';
         $('#pilot-live-time').textContent=format(elapsed());
         $('.pilot-speed strong').textContent=Math.round(car.v*3.6);
         const brake=keys.has('s')||[...touches.values()].includes('s');
@@ -266,7 +269,7 @@ export function bootPilot({canvas,ctx,world}) {
         }
         $('.pilot-speed span').dataset.available=String(!car.pit&&drsZoneAt(car.s)>=0);
         $('.pilot-speed span').dataset.active=String(car.drs);
-        if(!saving)radio(car.pit?'Segure W para sair dos boxes.':car.invalid?'Volta invalidada por limite de pista.':car.start===null?'Volta de saída. Cruze a linha para começar o cronômetro.':latest?`Última volta ${format(latest.ms)}${latest.valid?'':' · inválida'}`:'Volta cronometrada em andamento.');
+        if(!saving)radio(car.pit?'Segure W para sair dos boxes.':car.start===null?'Cruze a linha para começar o cronômetro.':car.invalid?'Volta invalidada por limite de pista.':latest?`Última volta ${format(latest.ms)}${latest.valid?'':' · inválida'}`:'Volta cronometrada em andamento.');
       }
     } else racingAudio.update();
     paint(car??idle);

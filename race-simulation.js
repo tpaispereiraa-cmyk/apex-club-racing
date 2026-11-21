@@ -8,7 +8,7 @@ import {startingGrid,TEAMS} from './teams.js';
 import {driverRating} from './drivers.js';
 import {garageStop} from './pit-layout.js';
 import {CAR_WIDTH,SAFETY_GAP,LANE_CLEARANCE,GRID_SPACING} from './vehicle-geometry.js';
-import {sectionAt,drsZoneAt,crosses,PIT,pitOffset} from './track-profile.js';
+import {sectionAt,drsZoneAt,crosses,PIT,pitOffset,FLYING_START,TIMED_PIT_RELEASE} from './track-profile.js';
 import {createRace,random,event,updateWeather,bestCompound,tyreSuitability,capabilities,plannedSpeed,battleScore,errorRate,updateSystems,chooseCompound,COMPOUNDS,isDryTyre} from './race-systems.js';
 import {resolveContacts,updateMechanical,safeEscapeSide,FAULT_LABELS} from './race-incidents.js';
 export function createField(race=createRace(),gridResults=null,customEntries=null){
@@ -18,12 +18,15 @@ export function createField(race=createRace(),gridResults=null,customEntries=nul
   if(race.type==='practice'&&race.practiceCar)entries=entries.filter(e=>e.id===race.practiceCar);
   if(gridResults){const positions=new Map(gridResults.map((r,i)=>[r.id,i]));if(entries.some(e=>!positions.has(e.id)))throw new Error('Grid com carro desconhecido ou ausente.');entries.sort((a,b)=>positions.get(a.id)-positions.get(b.id));}
   const qualifying=race.type!=='race';
-  const field=entries.map((entry,grid)=>{let s=qualifying?-length+PIT.exit:-80-Math.floor(grid/2)*GRID_SPACING,lane=qualifying?-24:grid%2?24:-24;
-    return{...entry,grid,...at(s,lane),s,progress:s,lap:1,v:0,lane,laneTarget:lane,finishTime:null,lapStart:null,bestLap:Infinity,previousLap:1,
+  const flying=qualifying&&race.timedStart==='flying', fromPit=qualifying&&race.timedStart==='pits';
+  const field=entries.map((entry,grid)=>{
+    const s=flying?FLYING_START:fromPit?TIMED_PIT_RELEASE:qualifying?-length+PIT.exit:-80-Math.floor(grid/2)*GRID_SPACING;
+    const lane=flying?0:qualifying?-24:grid%2?24:-24;
+    return{...entry,grid,...at(s,fromPit?pitOffset(s):lane),s,progress:s,lap:1,v:0,lane,laneTarget:lane,finishTime:null,lapStart:null,bestLap:Infinity,previousLap:1,
       lapTimes:[],lapDetails:[],pitHistory:[],lapContext:null,sectorTiming:newSectorTiming(),released:!qualifying,releaseAt:qualifying?grid*(race.type==='qualifying'&&customEntries?9:2.25):0,inGarage:false,
       launchDelay:.08+(100-entry.driver.stats.reactions)*.012,compound:bestCompound(race.wetness),tyreLife:100,tyreTemp:race.wetness>.2?70:90,
       engineTemp:88,engineHealth:100,energy:80,fuel:(10+race.laps*11)*length/14577.843081736215,damage:0,damageParts:{frontWing:0,rearWing:0,suspension:0},fault:null,retired:false,retirementTime:null,contactUntil:0,surface:'asphalt',escapeSide:0,drs:false,drsEligible:false,drsZone:-1,ers:false,
-      pit:null,pitRequested:false,pitReason:'',pitStops:0,status:'LARGADA',incident:null,errorCooldown:5,decisionCooldown:0,battleMode:'',battleUntil:0,metrics:{attacks:0,defenses:0,errors:0,contacts:0,faults:0,gravel:0},telemetry:{}};
+      pit:fromPit?{exitAt:-length+PIT.exit,served:true}:null,pitRequested:false,pitReason:'',pitStops:0,status:'LARGADA',incident:null,errorCooldown:5,decisionCooldown:0,battleMode:'',battleUntil:0,metrics:{attacks:0,defenses:0,errors:0,contacts:0,faults:0,gravel:0},telemetry:{}};
   });
   for(const c of field){c.compound=chooseCompound(c,race);c.raceWorldLength=length;c.raceMetres=CIRCUIT.metres;c.tyreFittedAtS=c.s;c.tyreHistory=[];if(c.manager){c.compound=race.type==='practice'?(race.practiceCompound??'medium'):qualifying?'soft':c.manager.strategy.compound;if(c.manager.tyreStock[c.compound]<=0)c.compound=managedCompound(c,race,'medium');if(c.manager.tyreStock[c.compound]>0)c.manager.tyreStock[c.compound]--;c.fuel=!qualifying&&c.manager.strategy.fuelKg!==undefined?c.manager.strategy.fuelKg:(qualifying?20:(10+race.laps*3.5)*(CIRCUIT.metres/4309));c.engineHealth=c.manager.engineCondition??100;}}
   for(const c of field)c.tyreHistory.push({compound:c.compound,lap:1});

@@ -158,8 +158,8 @@ export async function bootSpectator({canvas,ctx,world}){
     if(['hub','practice-report','qualifying-report','race-report','brief-practice','brief-qualifying','brief-race'].includes(action)){openScreen(action);return;}
     if(action==='manager'||action.startsWith('manager-')){const [tab,slot]=action.slice(8).split('-');managerUI.show(action==='manager'?undefined:tab,slot===undefined?undefined:Number(slot));return;}
     if(action==='resume'||action==='back-live'){resumeSession();return;}
-    if(action==='start-practice'){loadSession(ctl.state.active?.phase==='practice'&&ctl.state.active.checkpoints?ctl.recover():ctl.begin(args));return;}
-    if(action==='start-qualifying'){loadSession(ctl.state.active?.phase==='qualifying'?ctl.recover():ctl.toQualifying());return;}
+    if(action==='start-practice'){loadSession(ctl.state.active?.phase==='practice'&&ctl.state.active.checkpoints?ctl.recover():ctl.begin(args?.slot===undefined?null:args,{start:args?.start}));return;}
+    if(action==='start-qualifying'){loadSession(ctl.state.active?.phase==='qualifying'?ctl.recover():ctl.toQualifying({start:args?.start}));return;}
     if(action==='start-grid'){
       if(state==='presentation')return;
       const pack=ctl.state.active?.phase==='race'?ctl.recover():ctl.toRace(ctl.recover().cars);
