@@ -1,6 +1,8 @@
 import {drawCar} from './car-renderer.js';
 import {at, length, W, H} from './track.js';
 import {drsZoneAt} from './track-profile.js';
+import {sectorDelta, SECTOR_COLORS} from './sector-timing.js';
+import {createRacingAudio} from './racing-audio.js';
 import {makePilotCar, stepPilot, recoverPilot, setupFor, PILOT_STEP, PILOT_SETUP, PRESETS, SETUP} from './pilot-driving.js';
 
 const format = ms => ms == null ? '—' : `${Math.floor(ms/60000)}:${((ms%60000)/1000).toFixed(3).padStart(6,'0')}`;
@@ -29,7 +31,7 @@ export function bootPilot({canvas,ctx,world}) {
   const ui=document.createElement('section');
   ui.id='pilot';
   ui.innerHTML=`
-    <nav class="pilot-nav"><a href="/" aria-label="Voltar ao APEX CLUB"><strong>A</strong> APEX CLUB</a><span>INTERLAGOS / PILOTAR</span></nav>
+    <nav class="pilot-nav"><a href="/" aria-label="Voltar ao APEX CLUB"><strong>A</strong> APEX CLUB</a><span>INTERLAGOS / PILOTAR</span><button id="pilot-sound" class="icon-button" aria-pressed="false">SOM OFF</button></nav>
     <div class="pilot-garage">
       <section class="pilot-intro"><span class="pilot-kicker">PRACTICE · INTERLAGOS</span><h1>Dia de <em>prática.</em></h1><p id="pilot-deadline">Consultando o horário do treino…</p>
       <div class="pilot-car-stage"><canvas id="pilot-preview" width="480" height="230" aria-label="Prévia da pintura do seu monoposto"></canvas><div><span>VOLTAS USADAS</span><b id="pilot-quota">0 / 30</b></div></div>
@@ -47,13 +49,28 @@ export function bootPilot({canvas,ctx,world}) {
     <section class="pilot-track" hidden>
       <div class="pilot-track-top"><div><span id="pilot-phase">PISTA</span><strong id="pilot-live-time">—</strong></div><div><span>VOLTAS USADAS</span><strong id="pilot-live-quota">0 / 30</strong></div></div>
       <p id="pilot-radio" role="status"></p>
-      <div class="pilot-track-bottom"><div class="pilot-drive-actions"><button data-action="garage">Voltar à garagem</button><button data-action="recover">Reposicionar</button></div><div class="pilot-speed"><strong>0</strong> km/h <span>DRS</span></div></div>
+      <div class="pilot-splits"><span>Δ VS. SUA MELHOR VOLTA</span><div>${SECTOR_COLORS.map((color,i)=>`<div><b style="color:${color}">S${i+1}</b><output>—</output></div>`).join('')}</div></div>
+      <div class="pilot-track-bottom"><div class="pilot-drive-actions"><button data-action="garage">Voltar à garagem</button><button data-action="recover">Reposicionar</button></div><div class="pilot-speed"><b id="pilot-gear">N</b><strong>0</strong> km/h <span>DRS</span></div></div>
       <div class="pilot-touch" aria-label="Controles de pilotagem">${[['a','◀'],['d','▶'],['e','DRS'],['s','Freio'],['w','Acelerar']].map(([k,label])=>`<button data-key="${k}">${label}</button>`).join('')}</div>
     </section>`;
   document.body.append(ui);
   const $ = id => ui.querySelector(id);
   const form = $('#pilot-register'), garage = $('.pilot-garage'), track = $('.pilot-track');
   const preview = $('#pilot-preview'), previewCtx = preview.getContext('2d');
+  const racingAudio=createRacingAudio();
+  const soundButton=$('#pilot-sound');
+  const splitOutputs=[...ui.querySelectorAll('.pilot-splits output')];
+  let wantsSound=readLocal('apex-pilot-sound')!==false;
+  const setSound=async on=>{
+    const enabled=await racingAudio.setEnabled(on);
+    soundButton.textContent=enabled?'SOM ON':'SOM OFF';
+    soundButton.setAttribute('aria-pressed',String(enabled));
+  };
+  soundButton.onclick=()=>{
+    wantsSound=!racingAudio.enabled;
+    writeLocal('apex-pilot-sound',wantsSound);
+    setSound(wantsSound);
+  };
   const keys = new Set(), touches = new Map();
   const draft = readLocal(draftKey) ?? {};
   let preset=PRESETS[draft.preset] ? draft.preset : 'balanced', setup=setupFor(preset);
@@ -118,6 +135,7 @@ export function bootPilot({canvas,ctx,world}) {
     radio('Gravando volta…');
     try {
       state=await getState('/lap',pending);
+      if(car)car.bestSplits=state.bestSplits??null;
       pending=null;writeLocal(pendingKey,null);
       message('');
       if(!state.open || state.used>=state.limit) {
@@ -157,13 +175,14 @@ export function bootPilot({canvas,ctx,world}) {
   });
   $('#pilot-start').addEventListener('click',async ()=>{
     if(busy || pending) return;
+    if(wantsSound)setSound(true);
     busy=true;
     message('');
     try {
       state=await getState();
       showState();
       if(!state.driver || !state.open || state.used>=state.limit)return;
-      car=makePilotCar(setup,state.driver.color);
+      car=makePilotCar(setup,state.driver.color,state.bestSplits??null);
       camera=null;accumulator=0;last=0;
       garage.hidden=true;track.hidden=false;
       radio('Segure W para sair dos boxes.');
@@ -234,11 +253,22 @@ export function bootPilot({canvas,ctx,world}) {
         $('#pilot-phase').textContent=car.pit?'PIT LANE':car.start===null?'VOLTA DE SAÍDA':'VOLTA RÁPIDA';
         $('#pilot-live-time').textContent=format(elapsed());
         $('.pilot-speed strong').textContent=Math.round(car.v*3.6);
+        const brake=keys.has('s')||[...touches.values()].includes('s');
+        const throttle=!brake&&(keys.has('w')||[...touches.values()].includes('w'))?1:0;
+        const revs=racingAudio.update({active:!document.hidden,speed:car.v,throttle,braking:brake});
+        $('#pilot-gear').textContent=car.v<.4&&!throttle?'N':revs.gear;
+        for(const [i,output] of splitOutputs.entries()){
+          const split=car.splits[i]??car.lastSplits[i];
+          const delta=split?.valid?split.delta:null;
+          const label=split&&!split.valid?'INV':sectorDelta(delta==null?null:delta/1000);
+          if(output.value!==label)output.value=label;
+          output.dataset.trend=delta<0?'gain':delta>0?'loss':'';
+        }
         $('.pilot-speed span').dataset.available=String(!car.pit&&drsZoneAt(car.s)>=0);
         $('.pilot-speed span').dataset.active=String(car.drs);
         if(!saving)radio(car.pit?'Segure W para sair dos boxes.':car.invalid?'Volta invalidada por limite de pista.':car.start===null?'Volta de saída. Cruze a linha para começar o cronômetro.':latest?`Última volta ${format(latest.ms)}${latest.valid?'':' · inválida'}`:'Volta cronometrada em andamento.');
       }
-    }
+    } else racingAudio.update();
     paint(car??idle);
   }
   resize();addEventListener('resize',resize);

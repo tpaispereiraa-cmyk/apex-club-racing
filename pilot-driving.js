@@ -19,31 +19,51 @@ const fixedStep = 1/60;
 export const PILOT_STEP = fixedStep;
 const base = createCareer('aurora','APEX Practice');
 
-export function makePilotCar(setup,color) {
+export function makePilotCar(setup,color,bestSplits=null) {
   base.teams.aurora.cars[0].setup = {...setup};
-  const s = PIT_LAYOUT.firstStop;
+  const s = length+PIT_LAYOUT.exit-270;
   return {...pitPoint(s), s, pit:true, v:0, steer:0, slip:0, drs:false, off:false,
     team:{color:'#223037',secondary:'#10191c',accent:color}, compound:'medium', number:1,
     model:deriveCar(base,'aurora',0), elapsed:0, progress:0, sector:0, gate:0,
-    start:null, invalid:false, safeS:s};
+    start:null, invalid:false, safeS:s, bestSplits, splits:[], lastSplits:[], nextSplit:null};
 }
 
 function timeLap(car, delta) {
   const before = car.progress;
   car.progress += delta;
-  if (delta <= 0 || car.progress < car.gate) return null;
-  const at = car.elapsed - fixedStep * clamp((car.progress-car.gate)/Math.max(.001,car.progress-before),0,1);
+  if (delta <= 0) return null;
+  const crossing = gate => car.elapsed-fixedStep*clamp((car.progress-gate)/Math.max(.001,car.progress-before),0,1);
+  if (car.start!==null && car.splits.length<2 && car.progress>=car.nextSplit) {
+    car.splits.push(splitAt(car,crossing(car.nextSplit)));
+    car.nextSplit+=length/3;
+  }
+  if (car.progress < car.gate) return null;
+  const at = crossing(car.gate);
   if (car.sector < 8) {
     car.sector++;
     car.gate += length/8;
     return null;
   }
-  const lap = car.start === null ? null : {ms:Math.round((at-car.start)*1000),valid:!car.invalid};
+  let lap=null;
+  if(car.start!==null) {
+    car.splits.push(splitAt(car,at));
+    car.lastSplits=car.splits.map(s=>({...s,valid:!car.invalid}));
+    lap={ms:car.splits[2].ms,valid:!car.invalid,splits:car.splits.map(s=>s.ms)};
+    if(lap.valid&&(!car.bestSplits||lap.ms<car.bestSplits[2]))car.bestSplits=lap.splits;
+  }
   car.start=at;
+  car.splits=[];
+  car.nextSplit=car.gate+length/3;
   car.invalid=false;
   car.sector=1;
   car.gate+=length/8;
   return lap;
+}
+
+function splitAt(car,time) {
+  const ms=Math.round((time-car.start)*1000);
+  const reference=car.bestSplits?.[car.splits.length]??null;
+  return {ms,delta:reference===null?null:ms-reference,valid:!car.invalid};
 }
 
 export function recoverPilot(car) {

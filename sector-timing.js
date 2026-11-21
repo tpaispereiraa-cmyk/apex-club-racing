@@ -29,8 +29,10 @@ export function flushSectorCrossings(cars,race){
     if(valid){
       const cumulative=pass.time-timing.start,previous=timing.current.at(-1)?.cumulative??0,seconds=cumulative-previous;
       const reference=session.leader?{...session.leader,cumulative:session.leader.splits[sector].cumulative}:session.provisional[sector];
+      const personalTime=timing.best?.splits[sector]?.cumulative??null;
       const record={sector:sector+1,seconds,cumulative,at:pass.time,lap:lapIndex+1,
         delta:reference?cumulative-reference.cumulative:null,referenceId:reference?.id??null,referenceName:reference?.name??null,
+        personalDelta:personalTime===null?null:cumulative-personalTime,
         referenceTime:reference?.cumulative??null,provisional:!session.leader,
         sessionBest:!session.bestSectors[sector]||seconds<session.bestSectors[sector].seconds};
       timing.current.push(record);timing.lastPass=record;

@@ -49,6 +49,14 @@
 .pilot-track-top div, .pilot-speed, #pilot-radio { background: #101e19ee; padding: .65rem .95rem; border: 1px solid #e1efdc45; }
 .pilot-track-top strong { display: block; font-size: 1.7rem; font-variant-numeric: tabular-nums; }
 #pilot-radio { position: absolute; top: 5.5rem; left: clamp(.75rem,4vw,3rem); margin: 0; font-size: .9rem; }
+.pilot-splits { position: absolute; top: 8.8rem; left: clamp(.75rem,4vw,3rem); padding: .65rem .85rem; background: #101e19ee; border: 1px solid #e1efdc45; font-variant-numeric: tabular-nums; }
+.pilot-splits > span { font-size: .75rem; color: #b9cbbd; }
+.pilot-splits > div { display: flex; gap: .85rem; margin-top: .3rem; }
+.pilot-splits b, .pilot-splits output { display: block; white-space: nowrap; }
+.pilot-splits output { min-width: 4.3em; }
+.pilot-splits output[data-trend=gain] { color: #b9ef78; }
+.pilot-splits output[data-trend=loss] { color: #ffb78c; }
+#pilot-gear { display: inline-grid; place-items: center; min-width: 1.5rem; margin-right: .5rem; border: 1px solid #e1efdc45; color: #bfcec3; }
 .pilot-speed { white-space: nowrap; }
 .pilot-speed strong { color: var(--lime); font-size: 2.5rem; font-variant-numeric: tabular-nums; }
 .pilot-speed span { margin-left: .4rem; opacity: .4; }

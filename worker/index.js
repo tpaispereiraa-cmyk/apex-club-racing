@@ -16,7 +16,8 @@ export default {
     const key = pathname==='/' || page.test(pathname) ? '/index.html' : pathname;
     const asset = Object.hasOwn(assets,key) ? assets[key] : null;
     if (!asset) return new Response('Not found',{status:404});
-    return new Response(request.method==='HEAD'?null:asset.body,{headers:{
+    const body=request.method==='HEAD'?null:asset.binary?Uint8Array.from(atob(asset.body),c=>c.charCodeAt(0)):asset.body;
+    return new Response(body,{headers:{
       'Content-Type':asset.type,'Cache-Control':'no-cache','X-Content-Type-Options':'nosniff',
       'Referrer-Policy':'strict-origin-when-cross-origin'
     }});

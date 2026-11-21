@@ -14,7 +14,8 @@ async function state(db, driver, closesAt, open) {
   const basic = {closesAt, open, limit:LIMIT};
   if (!driver) return {...basic, driver:null};
   const laps = await row(db, 'SELECT count(*) AS used, min(CASE WHEN valid=1 THEN elapsed_ms END) AS best FROM practice_laps WHERE driver_id=?', driver.id);
-  const result = {...basic, driver:{name:driver.name, color:driver.color}, ...laps};
+  const reference = await row(db, 'SELECT splits FROM practice_laps WHERE driver_id=? AND valid=1 ORDER BY elapsed_ms, splits IS NULL, lap_id LIMIT 1', driver.id);
+  const result = {...basic, driver:{name:driver.name, color:driver.color}, ...laps, bestSplits:reference?.splits?JSON.parse(reference.splits):null};
   if (!open) {
     const board = await db.prepare('SELECT d.name, d.color, count(l.lap_id) AS used, min(CASE WHEN l.valid=1 THEN l.elapsed_ms END) AS best FROM practice_drivers d LEFT JOIN practice_laps l ON d.id=l.driver_id WHERE d.event_id=? GROUP BY d.id ORDER BY best IS NULL, best, d.name_key').bind(EVENT).all();
     result.board = board.results;
@@ -59,11 +60,12 @@ export async function practiceAPI(request, env) {
 
   if (url.pathname !== '/api/practice/lap') return problem('Rota inexistente.', 404);
   if (!driver) return problem('Faça a inscrição antes de entrar na pista.', 401);
-  const {id, ms, valid} = payload;
+  const {id, ms, valid, splits} = payload;
   if (typeof id !== 'string' || !/^[a-f0-9-]{36}$/i.test(id) || !Number.isInteger(ms) || ms < 35000 || ms > 1800000 || typeof valid !== 'boolean') return problem('Tempo de volta inválido.', 400);
   if (await row(env.DB,'SELECT 1 FROM practice_laps WHERE driver_id=? AND lap_id=?',driver.id,id)) return json(await state(env.DB,driver,closesAt,open));
   if (!open) return problem('O treino encerrou antes de receber essa volta.', 410);
-  await env.DB.prepare('INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid) SELECT ?,?,?,? WHERE (SELECT count(*) FROM practice_laps WHERE driver_id=?) < ? ON CONFLICT(driver_id,lap_id) DO NOTHING').bind(driver.id,id,ms,Number(valid),driver.id,LIMIT).run();
+  if (splits!=null&&(!Array.isArray(splits)||splits.length!==3||!splits.every(Number.isSafeInteger)||splits[0]<=0||splits[1]<=splits[0]||splits[2]<=splits[1]||splits[2]!==ms))return problem('Parciais inválidas.',400);
+  await env.DB.prepare('INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid,splits) SELECT ?,?,?,?,? WHERE (SELECT count(*) FROM practice_laps WHERE driver_id=?) < ? ON CONFLICT(driver_id,lap_id) DO NOTHING').bind(driver.id,id,ms,Number(valid),splits?JSON.stringify(splits):null,driver.id,LIMIT).run();
   if (!await row(env.DB,'SELECT 1 FROM practice_laps WHERE driver_id=? AND lap_id=?',driver.id,id)) return problem('Limite de 30 voltas atingido.', 409);
   return json(await state(env.DB,driver,closesAt,open));
 }

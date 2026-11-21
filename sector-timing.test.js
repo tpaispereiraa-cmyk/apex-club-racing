@@ -53,8 +53,13 @@ for(const type of ['practice','qualifying'])test(`${type}: all actual timed laps
   assert.ok(sessionComplete(pack.cars));
   for(const c of pack.cars.filter(c=>!c.retired)){
     assert.equal(c.sectorTiming.history.length,pack.session.laps);
+    let personalBest=null;
     for(const [i,lap]of c.sectorTiming.history.entries()){
       assert.equal(lap.splits.length,3);assert.ok(Math.abs(lap.splits.reduce((n,x)=>n+x.seconds,0)-c.lapTimes[i])<1e-6);
+      for(const [j,split]of lap.splits.entries()){
+        assert.equal(split.personalDelta,personalBest?split.cumulative-personalBest.splits[j].cumulative:null);
+      }
+      if(!personalBest||lap.time<personalBest.time)personalBest=lap;
     }
     assert.ok(Math.abs(c.sectorTiming.best.time-c.bestLap)<1e-6);
   }

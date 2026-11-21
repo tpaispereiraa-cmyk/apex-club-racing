@@ -22,6 +22,7 @@ import {createManagerController} from './manager/controller.js';
 import {setupManagerUI} from './manager/ui.js';
 import {parseRoute,circuitUrl} from './routes.js';
 import {PHASES,POINTS,championshipOrder} from './tournament.js';
+import {createRacingAudio} from './racing-audio.js';
 const $=s=>document.querySelector(s);
 const time=t=>`${String(Math.floor(t/60)).padStart(2,'0')}:${(t%60).toFixed(3).padStart(6,'0')}`;
 export async function bootSpectator({canvas,ctx,world}){
@@ -40,7 +41,8 @@ export async function bootSpectator({canvas,ctx,world}){
   let raceCounter=0,race=createRace(),raceSpeed=1,director=true,directorTimer=0,cameraReason='Líder da sessão';
   let cars=createField(race),state='intro',paused=false,elapsed=0,count=3,finished=false,followedId=cars[0].id,overview=false;
   let weekendSeed=2026,gridResults=[],gridCountdown=10;
-  let camera={x:W/2,y:H/2,zoom:.4},view={w:innerWidth,h:innerHeight},sound=false,audio,osc,gain;
+  let camera={x:W/2,y:H/2,zoom:.4},view={w:innerWidth,h:innerHeight};
+  const racingAudio=createRacingAudio();
   const followed=()=>cars.find(c=>c.id===followedId)||cars[0];
   const resize=()=>{view={w:innerWidth,h:innerHeight};const dpr=Math.min(devicePixelRatio||1,2);canvas.width=view.w*dpr;canvas.height=view.h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);};
   addEventListener('resize',resize);resize();setupPaddock();
@@ -132,7 +134,7 @@ export async function bootSpectator({canvas,ctx,world}){
     $('#best').textContent='MELHOR VOLTA '+(c.bestLap<Infinity?time(c.bestLap):'—');$('#speed').textContent=Math.round(c.manager?c.v/length*CIRCUIT.metres*3.6:c.v*.57);$('#speedbar').style.width=`${clamp(c.v/c.performance.maxSpeed*100,0,100)}%`;
     $('#following-name').textContent=`#${c.number} · ${c.driver.name}`;$('#following-name').style.color=c.team.color;$('#camera-mode').textContent=overview?'APROXIMAR CÂMERA':'VER PISTA INTEIRA';
     updateMarkup($('#leaderboard'),order.map((entry,i)=>`<button data-follow="${entry.id}" class="${entry.id===c.id?'is-followed':''}" aria-label="Acompanhar carro ${entry.number} da ${entry.team.name}" style="--team:${entry.team.color}"><span>${i+1}</span><i></i><b>#${entry.number}</b><em>${entry.driver.name.split(' ').at(-1)}</em><small>${q?(entry.bestLap<Infinity?time(entry.bestLap):entry.retired?'SEM TEMPO':entry.released?'EM PISTA':'BOX'):entry.retired?'DNF':entry.finishTime!==null?'FINAL':entry.pit?'PIT':entry.drs?'DRS':Math.min(entry.lap,race.laps)+'/'+race.laps}</small></button>`).join(''));
-    const sectorMarkup=q?`<div class="manager-live-sectors">${visibleSectorSplits(c).map((split,i)=>`<div><b style="color:${SECTOR_COLORS[i]}">S${i+1}</b><strong>${split?split.seconds.toFixed(3)+'s':'—'}</strong><small style="color:${split?.delta<0?'#b9ef78':'#f3bd7b'}">${split?sectorDelta(split.delta):'—'}</small></div>`).join('')}</div>`:'';
+    const sectorMarkup=q?`<div class="manager-live-sectors" aria-label="Delta acumulado contra a melhor volta do piloto">${visibleSectorSplits(c).map((split,i)=>`<div><b style="color:${SECTOR_COLORS[i]}">S${i+1}</b><strong>${split?split.seconds.toFixed(3)+'s':'—'}</strong><small style="color:${split?.personalDelta<0?'#b9ef78':'#f3bd7b'}">${split?sectorDelta(split.personalDelta):'—'}</small></div>`).join('')}</div>`:'';
     const st=strategyTelemetry(c,race),compound=COMPOUNDS[c.compound],pilotExpanded=$("#car-telemetry details")?.open||false;
     $('#weather-mode').textContent=({auto:'CLIMA VARIÁVEL',dry:'SECO FIXO',rain:'CHUVA FIXA'}[race.weather]);$('#weather-data').textContent=`Água ${Math.round(race.wetness*100)}% · Asfalto ${Math.round(race.trackTemp)}°C`;
     $('#weather-forecast').textContent=weatherForecast(race).summary;
@@ -144,7 +146,7 @@ export async function bootSpectator({canvas,ctx,world}){
   $('#previous-car').onclick=()=>switchCar(-1);$('#next-car').onclick=()=>switchCar(1);$('#camera-mode').onclick=()=>{overview=!overview;saveLiveView();hud();};
   $('#leaderboard').onclick=e=>{const b=e.target.closest('[data-follow]');if(b){director=false;followedId=b.dataset.follow;saveLiveView();hud();}};
   function loadSession(pack){weekendUI.hide();race=pack.session;cars=pack.cars;state='racing';paused=false;finished=false;elapsed=pack.elapsed??0;checkpointTime=elapsed;count=pack.resumed||race.type!=='race'?0:3;overview=false;followedId=managerMode?(pack.resumed&&cars.find(c=>c.id===manager.state.liveView?.followedId)?.id)||cars.find(c=>c.team.id===manager.state.selectedTeam&&c.slot===pitSlot)?.id||cars[0].id:cars.find(c=>c.id===watch.state.liveView?.followedId)?.id??cars[0].id;if(!managerMode){director=watch.state.liveView?.director??true;overview=watch.state.liveView?.overview??false;}
-    document.body.classList.add('racing');document.body.classList.remove('grid-summary');$('#race-results').classList.remove('qualifying-grid');$('#hud').hidden=false;$('#modal').hidden=true;camera.x=followed().x;camera.y=followed().y;camera.zoom=view.w<600?CAMERA_ZOOM.mobile:CAMERA_ZOOM.desktop;hud();saveLiveView();if(sound)audio?.resume();}
+    document.body.classList.add('racing');document.body.classList.remove('grid-summary');$('#race-results').classList.remove('qualifying-grid');$('#hud').hidden=false;$('#modal').hidden=true;camera.x=followed().x;camera.y=followed().y;camera.zoom=view.w<600?CAMERA_ZOOM.mobile:CAMERA_ZOOM.desktop;hud();saveLiveView();}
   function start(){if(route.mode!=='watch'){location.href=circuitUrl(CIRCUIT.id,'watch');return;}managerMode=false;if(!watch.state){watch=createManagerController({getItem:()=>null,setItem:watchStorage.setItem},watchOptions);watch.create('aurora','Aurora Racing');}restorePresentation(watch);$('#live-manager').hidden=true;}
   function saveLiveView(){if(state==='racing')activeController().view('live',{paused,followedId,director,overview});}
   function openScreen(screen,options={}){engineerRadio.hidden=true;pitWall.hidden=true;paused=true;state='weekend';$('#modal').hidden=true;$('#hud').hidden=true;document.body.classList.remove('racing','qualifying','grid-summary');watchUI.update({active:false});weekendUI.show(screen,options);}
@@ -181,7 +183,7 @@ export async function bootSpectator({canvas,ctx,world}){
   addEventListener('keydown',e=>{if(sessionWorker||e.defaultPrevented||e.repeat||!$('#paddock').hidden||managerUI.isOpen()||weekendUI.isOpen)return;if(state!=='racing'||e.target.closest?.('input,select,textarea')||(e.code==='Space'&&e.target.closest?.('button,summary')))return;if(['ArrowLeft','ArrowRight','Space'].includes(e.code))e.preventDefault();if(e.code==='KeyP'||e.code==='Space'||e.code==='Escape')pause();if(e.code==='KeyR')loadSession(activeController().begin());if(e.code==='KeyC'){overview=!overview;hud();}if(e.code==='ArrowLeft')switchCar(-1);if(e.code==='ArrowRight')switchCar(1);});
   // Pause when the tab loses focus so a background race is not missed.
   addEventListener('blur',()=>{if(state==='racing'&&!paused&&!finished)pause();});
-  $('#sound').onclick=()=>{sound=!sound;$('#sound').textContent=sound?'SOM ON':'SOM OFF';if(sound&&!audio){audio=new AudioContext();osc=audio.createOscillator();gain=audio.createGain();const filter=audio.createBiquadFilter();osc.type='sawtooth';filter.type='lowpass';filter.frequency.value=430;osc.connect(filter);filter.connect(gain);gain.connect(audio.destination);gain.gain.value=0;osc.start();}if(sound)audio.resume();};
+  $('#sound').onclick=async()=>{const on=await racingAudio.setEnabled(!racingAudio.enabled);$('#sound').textContent=on?'SOM ON':'SOM OFF';$('#sound').setAttribute('aria-pressed',String(on));};
   let previous=performance.now(),hudTimer=0;
   function frame(now){let wallDt=Math.min((now-previous)/1000,2),dt=Math.min(wallDt,.05);previous=now;weekendUI.tick(wallDt);
     if(state==='intro'){for(const c of cars){c.s+=dt*(180+c.performance.acceleration*.15);Object.assign(c,at(c.s,c.lane));}}
@@ -196,7 +198,10 @@ export async function bootSpectator({canvas,ctx,world}){
     ctx.fillStyle='#344e35';ctx.fillRect(0,0,view.w,view.h);ctx.save();if(watchActive){ctx.beginPath();ctx.rect(0,sceneTop,view.w,sceneHeight);ctx.clip();}ctx.translate(view.w*(state==='intro'?.60:.5),watchActive?sceneTop+sceneHeight*.5:view.h*.53);ctx.scale(camera.zoom,camera.zoom);ctx.translate(-camera.x,-camera.y);ctx.drawImage(world,0,0,W,H);
     for(const c of cars){if(state!=='intro'&&(!c.released||c.inGarage||!c.pit&&belowBridge(c.s)))continue;if(state==='racing'&&(c.surface==='gravel'||c.fault?.type==='engine'||c.fault?.type==='cooling')){ctx.fillStyle=c.surface==='gravel'?'#c8b68b65':'#bbc4c17a';for(let i=1;i<=3;i++){ctx.beginPath();ctx.ellipse(c.x-Math.cos(c.angle)*(10+i*8),c.y-Math.sin(c.angle)*(10+i*8),5+i*2,3+i,0,0,Math.PI*2);ctx.fill();}}drawCar(ctx,c,{player:state==='racing'&&c.id===followedId,scale:CAR_SCALE});}ctx.restore();
     if(state==='racing'&&race.wetness>.1){ctx.fillStyle=`rgba(99,139,165,${race.wetness*.09})`;ctx.fillRect(0,0,view.w,view.h);ctx.strokeStyle=`rgba(201,225,239,${race.wetness*.3})`;ctx.lineWidth=1;for(let i=0;i<70*race.wetness;i++){const x=(i*137+now*.15)%view.w,y=(i*197+now*.5)%view.h;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-6,y+15);ctx.stroke();}}
-    if(audio){gain.gain.setTargetAtTime(sound&&state==='racing'&&!paused&&!finished&&count<=0?.018:0,audio.currentTime,.1);osc.frequency.setTargetAtTime(35+followed().v*.43,audio.currentTime,.06);}
+    const listening=followed();
+    racingAudio.update({active:state==='racing'&&!paused&&!finished&&count<=0&&!document.hidden,
+      speed:listening.v*CIRCUIT.metres/length,throttle:listening.telemetry.throttle??0,
+      braking:(listening.telemetry.braking??0)>.15});
     requestAnimationFrame(frame);
   }requestAnimationFrame(frame);
   $('#start').innerHTML='ASSISTIR · TUDO POR IA <span>↗</span>';

@@ -23,7 +23,12 @@ for(let i=0;i<10;i++){let p=garagePose(i);g.save();g.translate(p.x,p.y);g.rotate
 for(let s=-1450;s<200;s+=110){let p=at(s,180);g.save();g.translate(p.x,p.y);g.rotate(p.angle);g.fillStyle='#172b2155';g.fillRect(-45,-28,104,68);g.fillStyle='#adb4a2';g.fillRect(-52,-35,104,62);for(let y=-29;y<24;y+=8){g.fillStyle='#536251';g.fillRect(-48,y,96,3);for(let x=-46;x<45;x+=7){g.fillStyle=['#e1c652','#3b835a','#c0c7b7','#437ca0'][Math.floor(rnd()*4)];g.fillRect(x,y-2,3,4);}}g.restore();}
 for(let i=0;i<520;i++){let x=80+rnd()*(W-160),y=60+rnd()*(H-120);const distance=nearest(x,y).d;if(distance>245){if(CIRCUIT.theme==='urban'){if(distance<1200){const w=40+rnd()*95,h=40+rnd()*90;building(x,y,w,h);g.fillStyle='#829292';for(let wx=x+8;wx<x+w-8;wx+=14)for(let wy=y+8;wy<y+h-8;wy+=14)g.fillRect(wx,wy,7,5);}}else if(CIRCUIT.theme==='lake'||CIRCUIT.theme==='island'){if(distance<470){g.fillStyle='#567452';g.beginPath();g.arc(x,y,45,0,TAU);g.fill();tree(x,y,14+rnd()*26);}}else if(CIRCUIT.theme!=='dry'||rnd()>.7)tree(x,y,14+rnd()*26);}}
 g.save();g.font='600 17px Arial';g.textAlign='center';for(let p of landmarks){g.fillStyle='#122a2055';g.fillText(p.name,p.x+2,p.y+2);g.fillStyle='#e1e8c9aa';g.fillText(p.name,p.x,p.y);}g.restore();
-for(let s=0;s<length;s+=650){let p=at(s,115);g.save();g.translate(p.x,p.y);g.rotate(p.angle);g.fillStyle='#162b21';g.fillRect(-68,-10,136,20);g.fillStyle='#d6ee97';g.font='bold 11px Arial';g.textAlign='center';g.fillText('APEX  /  CLUB',0,4);g.restore();}
+for(let s=0;s<length;s+=650){
+  const p=at(s,115),a=Math.cos(p.angle),b=Math.sin(p.angle);
+  const overlaps=[-68,-34,0,34,68].some(x=>[-10,0,10].some(y=>nearest(p.x+a*x-b*y,p.y+b*x+a*y).d<ROAD/2+12));
+  if(overlaps)continue;
+  g.save();g.translate(p.x,p.y);g.rotate(p.angle);g.fillStyle='#162b21';g.fillRect(-68,-10,136,20);g.fillStyle='#d6ee97';g.font='bold 11px Arial';g.textAlign='center';g.fillText('APEX  /  CLUB',0,4);g.restore();
+}
 const p=at(0);g.save();g.translate(p.x,p.y);g.rotate(p.angle);for(let a=0;a<4;a++)for(let b=0;b<10;b++){g.fillStyle=(a+b)%2?'#25352b':'#eeefdf';g.fillRect(a*8-16,b*10-50,8,10);}g.restore();for(let row=0;row<10;row++)for(let col=0;col<2;col++){let p=at(-80-row*GRID_SPACING,col?24:-24);g.save();g.translate(p.x,p.y);g.rotate(p.angle);g.strokeStyle='#e7e6c57a';g.lineWidth=2;g.strokeRect(-(CAR_LENGTH+4)/2,-(CAR_WIDTH+4)/2,CAR_LENGTH+4,CAR_WIDTH+4);g.restore();}}
 makeWorld();
 // The crossing at Suzuka is a bridge, not an at-grade intersection.
