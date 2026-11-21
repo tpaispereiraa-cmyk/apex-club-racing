@@ -15,12 +15,16 @@ if (!sqlite.prepare("select name from sqlite_master where name='practice_drivers
 if (!sqlite.prepare('PRAGMA table_info(practice_laps)').all().some(c=>c.name==='splits')) {
   sqlite.exec(await readFile(new URL('drizzle/0001_practice_splits.sql',root),'utf8'));
 }
+if (!sqlite.prepare('PRAGMA table_info(practice_laps)').all().some(c=>c.name==='round_key')) {
+  const migration=await readFile(new URL('drizzle/0002_pilot_weekend.sql',root),'utf8');
+  sqlite.exec(`BEGIN;\n${migration}\nCOMMIT;`);
+}
 const DB={prepare(sql){const stmt=sqlite.prepare(sql);return{bind(...args){return{
   first:async()=>stmt.get(...args)??null,
   all:async()=>({results:stmt.all(...args)}),
   run:async()=>({meta:{changes:stmt.run(...args).changes}})
 };}};}};
-const env={DB,PRACTICE_INVITE:process.env.PRACTICE_INVITE??'apex-local',PRACTICE_CLOSES_AT:process.env.PRACTICE_CLOSES_AT??new Date(Date.now()+86400000).toISOString()};
+const env={DB,PRACTICE_INVITE:process.env.PRACTICE_INVITE??'apex-local',PRACTICE_CLOSES_AT:process.env.PRACTICE_CLOSES_AT};
 const types={html:'text/html; charset=utf-8',js:'text/javascript; charset=utf-8',css:'text/css; charset=utf-8',md:'text/plain; charset=utf-8',wav:'audio/wav',ogg:'audio/ogg'};
 http.createServer(async(req,res)=>{
   try {

@@ -3,6 +3,7 @@
   "dialect": "sqlite",
   "entries": [
     {"idx":0,"version":"6","when":1795266000000,"tag":"0000_practice","breakpoints":true},
-    {"idx":1,"version":"6","when":1795284000000,"tag":"0001_practice_splits","breakpoints":true}
+    {"idx":1,"version":"6","when":1795284000000,"tag":"0001_practice_splits","breakpoints":true},
+    {"idx":2,"version":"6","when":1795295700000,"tag":"0002_pilot_weekend","breakpoints":true}
   ]
 }

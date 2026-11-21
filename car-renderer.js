@@ -19,7 +19,34 @@ export function drawCar(ctx,c,{player=false,scale=1}={}){
   // Sidepods flare around a slender cockpit and engine cover.
   const paint=ctx.createLinearGradient(0,-12,0,12);paint.addColorStop(0,primary);paint.addColorStop(.45,primary);paint.addColorStop(1,secondary);
   shape([[-25,-4],[-16,-10],[-2,-11],[8,-8],[12,-4],[30,-2.5],[31,2.5],[12,4],[8,8],[-2,11],[-16,10],[-25,4]],paint);
-  shape([[-22,-2],[-8,-3],[0,-3],[7,-2],[23,-1],[23,1],[7,2],[0,3],[-8,3],[-22,2]],secondary);
+  const pattern=team.pattern;
+  if(pattern&&pattern!=='clean'){
+    ctx.save();ctx.clip();ctx.fillStyle=accent;
+    switch(pattern){
+      case 'stripe':
+        ctx.fillRect(-25,-5,54,10);
+        ctx.fillStyle=secondary;ctx.fillRect(-25,-2,54,4);
+        break;
+      case 'chevron':
+        for(const x of [-26,-14,-2])shape([[x,-14],[x+4,-14],[x+14,0],[x+4,14],[x,14],[x+10,0]],accent);
+        break;
+      case 'checkers':
+        ctx.fillStyle=secondary;ctx.fillRect(-21,-12,24,24);
+        ctx.fillStyle=accent;
+        for(let x=0;x<6;x++)for(let y=0;y<6;y++)if((x+y)%2===0)ctx.fillRect(-21+x*4,-12+y*4,4,4);
+        break;
+      case 'split':
+        shape([[-28,-13],[1,-13],[19,13],[-28,13]],secondary);
+        shape([[-3,-13],[1,-13],[19,13],[15,13]],accent);
+        break;
+      case 'bolt':
+        shape([[-22,-12],[1,-12],[-5,-4],[17,-4],[-8,13],[-4,4],[-23,4],[-15,-4]],accent);
+        break;
+    }
+    ctx.restore();
+  }else{
+    shape([[-22,-2],[-8,-3],[0,-3],[7,-2],[23,-1],[23,1],[7,2],[0,3],[-8,3],[-22,2]],secondary);
+  }
   ctx.fillStyle=accent;ctx.fillRect(-15,-9,16,1.7);ctx.fillRect(-15,7.3,16,1.7);ctx.fillRect(17,-1,11,2);
   // Sidepod intake slots and small wing mirrors.
   ctx.fillStyle='#142027';ctx.fillRect(1,-8,6,2.5);ctx.fillRect(1,5.5,6,2.5);
@@ -33,7 +60,9 @@ export function drawCar(ctx,c,{player=false,scale=1}={}){
   ctx.fillStyle=primary;ctx.fillRect(30,-15,2,30);ctx.fillStyle=accent;ctx.fillRect(27,-18,8,2);ctx.fillRect(27,16,8,2);
   ctx.strokeStyle='#d6e5e85c';ctx.lineWidth=.65;for(let y of [-12,-9,9,12]){ctx.beginPath();ctx.moveTo(28,y);ctx.lineTo(33,y);ctx.stroke();}
   // Nose number, camera pod and rear rain light.
-  ctx.save();ctx.translate(16,0);ctx.rotate(Math.PI/2);ctx.fillStyle='#f5f5ec';ctx.font='bold 4.8px Arial';ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(String(c.number),0,0);ctx.restore();
+  ctx.save();ctx.translate(16,0);ctx.rotate(Math.PI/2);ctx.fillStyle='#f5f5ec';ctx.font='bold 4.8px Arial';ctx.textAlign='center';ctx.textBaseline='middle';
+  if(pattern){ctx.strokeStyle='#10181c';ctx.lineWidth=.9;ctx.strokeText(String(c.number),0,0);}
+  ctx.fillText(String(c.number),0,0);ctx.restore();
   ctx.fillStyle=c.slot===1?'#ffe060':secondary;ctx.fillRect(-9,-1.6,3,3.2);ctx.fillStyle='#ed4743';ctx.fillRect(-28,-1,2,2);
   if(player){ctx.fillStyle='#d5f561';shape([[-41,0],[-49,-5],[-49,5]],'#d5f561');}
   ctx.restore();

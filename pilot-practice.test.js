@@ -12,20 +12,31 @@ test('invitation, isolated drivers, atomic quota, retries and deadline',async()=
   const sqlite=new DatabaseSync(':memory:');
   sqlite.exec(readFileSync(new URL('./drizzle/0000_practice.sql',import.meta.url),'utf8'));
   sqlite.exec(readFileSync(new URL('./drizzle/0001_practice_splits.sql',import.meta.url),'utf8'));
+  sqlite.exec(readFileSync(new URL('./drizzle/0002_pilot_weekend.sql',import.meta.url),'utf8'));
   const env={PRACTICE_INVITE:'test-only',PRACTICE_CLOSES_AT:'2090-01-01T00:00:00Z',DB:{prepare(sql){return{bind(...args){return{
     first:async()=>sqlite.prepare(sql).get(...args)??null,
     all:async()=>({results:sqlite.prepare(sql).all(...args)}),
     run:async()=>({meta:sqlite.prepare(sql).run(...args)})
   };}};}}};
-  const send=(path='',data,cookie)=>practiceAPI(new Request('https://test.invalid/api/practice'+path,{
-    method:data?'POST':'GET',headers:{'Content-Type':'application/json',cookie:cookie??''},body:data&&JSON.stringify(data)
-  }),env);
+  const send=(path='',data,cookie,now)=>practiceAPI(new Request('https://test.invalid/api/practice'+path,{
+    method:data?'POST':'GET',headers:{'Content-Type':'application/json',cookie:cookie??''},body:data&&JSON.stringify({...(path==='/lap'?{phase:'practice'}:{}),...data})
+  }),env,now);
   assert.equal((await send('/register',{name:'Teste',invite:'wrong'})).status,403);
   const register=await send('/register',{name:'Piloto Teste',color:'#aabbcc',invite:'test-only'});
   assert.equal(register.status,201);
   const cookie=register.headers.get('Set-Cookie').split(';')[0];
   assert.equal((await send('/register',{name:'piloto teste',invite:'test-only'})).status,409);
   assert.equal((await (await send()).json()).driver,null);
+  const driverId=sqlite.prepare('SELECT id FROM practice_drivers').get().id;
+  sqlite.prepare('INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid) VALUES(?,?,60000,1)').run(driverId,crypto.randomUUID());
+  const clean=await (await send('',null,cookie)).json();
+  assert.equal(clean.used,0);
+  assert.equal(clean.best,null);
+  assert.equal(sqlite.prepare("SELECT count(*) AS n FROM practice_laps WHERE round_key='legacy'").get().n,1);
+  const livery={primary:'#011234',secondary:'#ffeebb',accent:'#00ccff',pattern:'chevron',number:48};
+  assert.equal((await send('/livery',{...livery,number:100},cookie)).status,400);
+  assert.deepEqual((await (await send('/livery',livery,cookie)).json()).driver.livery,livery);
+  assert.deepEqual((await (await send('',null,cookie)).json()).driver.livery,livery);
   const lap={id:crypto.randomUUID(),ms:87000,valid:true,splits:[28000,55000,87000]};
   const start=id=>send('/lap',{start:true,id},cookie);
   assert.equal((await send('/lap',lap,cookie)).status,409);
@@ -56,9 +67,52 @@ test('invitation, isolated drivers, atomic quota, retries and deadline',async()=
   assert.equal(retry.history.length,30);
   assert.deepEqual(retry.history[0],{ms:87000,valid:true,splits:lap.splits});
   assert.equal(retry.history.filter(l=>!l.valid).length,28);
-  env.PRACTICE_CLOSES_AT='2000-01-01T00:00:00Z';
-  assert.equal((await send('/register',{name:'Novo piloto',invite:'test-only'})).status,410);
-  assert.equal((await (await send('',null,cookie)).json()).board[0].best,87000);
+  delete env.PRACTICE_CLOSES_AT;
+  const qualStart=Date.parse('2026-11-22T03:00:00Z');
+  const raceStart=Date.parse('2026-11-23T03:00:00Z');
+  const raceEnd=Date.parse('2026-11-24T03:00:00Z');
+  assert.equal((await (await send('',null,cookie,qualStart-1)).json()).phase,'practice');
+  const afterPractice=await (await send('',null,cookie,qualStart)).json();
+  assert.equal(afterPractice.phase,'qualifying');
+  assert.equal(afterPractice.used,0);
+  assert.equal(afterPractice.sessions[0].board[0].best,87000);
+  assert.equal((await send('/lap',{start:true,id:crypto.randomUUID()},cookie,qualStart)).status,410);
+  const second=await send('/register',{name:'Mais um',invite:'test-only'},undefined,qualStart);
+  assert.equal(second.status,201);
+  const secondCookie=second.headers.get('Set-Cookie').split(';')[0];
+  const stint=async (sessionCookie,phase,now,times)=>{
+    let id=crypto.randomUUID();
+    const setup=setupFor('stable');
+    const first=await send('/lap',{phase,start:true,id,setup},sessionCookie,now);
+    assert.equal(first.status,200);
+    assert.equal((await first.json()).attemptId,id);
+    assert.equal((await send('/lap',{phase,start:true,id:crypto.randomUUID(),setup},sessionCookie,now)).status,409);
+    for(const ms of times){
+      const nextId=crypto.randomUUID();
+      const reply=await send('/lap',{phase,id,ms,valid:true,nextId},sessionCookie,now);
+      assert.equal(reply.status,200);
+      const snapshot=await reply.json();
+      id=snapshot.attemptId;
+      if(!id)return snapshot;
+    }
+    assert.fail('Stint should be complete');
+  };
+  const qualified=await stint(cookie,'qualifying',qualStart,[68000,61000,66000]);
+  assert.equal(qualified.used,3);
+  assert.equal(qualified.best,61000);
+  await stint(secondCookie,'qualifying',qualStart,[65000,62000,65000]);
+  const race=await (await send('',null,secondCookie,raceStart)).json();
+  assert.equal(race.phase,'race');
+  assert.deepEqual(race.grid,{position:2,delay:2000});
+  assert.equal(race.lockedSetup.rearWing,9);
+  assert.equal(race.sessions[1].board[0].best,61000);
+  assert.equal((await send('/register',{name:'Novo piloto',invite:'test-only'},undefined,raceStart)).status,410);
+  await stint(cookie,'race',raceStart,Array(12).fill(60000));
+  await stint(secondCookie,'race',raceStart,Array(12).fill(59900));
+  assert.equal((await (await send('',null,cookie,raceEnd-1)).json()).sessions[2].board,undefined);
+  const final=await (await send('',null,cookie,raceEnd)).json();
+  assert.equal(final.phase,null);
+  assert.deepEqual(final.sessions[2].board.map(r=>[r.name,r.official]),[['Piloto Teste',720000],['Mais um',720800]]);
 });
 
 test('gravel costs speed without invalidating the lap, even after an automatic recovery',()=>{
@@ -118,7 +172,7 @@ test('history shows individual sectors and ranks valid laps only',()=>{
   assert.match(table,/data-lap-mark="worst"[^>]*>91000/);
 });
 
-for(const startMode of ['pits','flying'])test(`WASD starts from ${startMode} and clocks two full laps`,()=>{
+for(const startMode of ['pits','flying','grid'])test(`WASD starts from ${startMode} and clocks two full laps`,()=>{
   const car=makePilotCar(setupFor('balanced'),'#ff55ee',null,startMode);
   assert.equal(car.pit,startMode==='pits');assert.equal(car.start,null);
   const angle=x=>Math.atan2(Math.sin(x),Math.cos(x));
@@ -136,7 +190,7 @@ for(const startMode of ['pits','flying'])test(`WASD starts from ${startMode} and
   const [{lap,display},second]=laps;
   assert.ok(exit<6);
   const firstLine=car.start-lap.ms/1000-second.lap.ms/1000;
-  assert.ok(startMode==='flying'?firstLine<18:firstLine>60);
+  assert.ok(startMode==='pits'?firstLine>60:firstLine<18);
   assert.ok(lap?.valid);
   assert.ok(lap.ms>80000 && lap.ms<95000);
   assert.equal(lap.splits.at(-1),lap.ms);

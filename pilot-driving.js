@@ -21,12 +21,14 @@ const base = createCareer('aurora','APEX Practice');
 
 export function makePilotCar(setup,color,bestSplits=null,startMode='pits') {
   base.teams.aurora.cars[0].setup = {...setup};
+  const paint=typeof color==='string'?{primary:'#223037',secondary:'#10191c',accent:color,number:1}:color;
   const flying=startMode==='flying';
-  const s=flying?FLYING_START:length+PIT_LAYOUT.exit-270;
-  const pose=flying?at(s):pitPoint(s);
-  return {...pose, s, pit:!flying, v:flying?22:0, steer:0, slip:0, drs:false, off:false,
-    team:{color:'#223037',secondary:'#10191c',accent:color}, compound:'medium', number:1,
-    model:deriveCar(base,'aurora',0), elapsed:0, startMode, progress:flying?s:0, sector:flying?8:0, gate:0,
+  const grid=startMode==='grid', onTrack=flying||grid;
+  const s=flying?FLYING_START:grid?-18:length+PIT_LAYOUT.exit-270;
+  const pose=onTrack?at(s):pitPoint(s);
+  return {...pose, s, pit:!onTrack, v:flying?22:0, steer:0, slip:0, drs:false, off:false,
+    team:{color:paint.primary,secondary:paint.secondary,accent:paint.accent,pattern:paint.pattern}, compound:'medium', number:paint.number,
+    model:deriveCar(base,'aurora',0), elapsed:0, startMode, progress:onTrack?s:0, sector:onTrack?8:0, gate:0,
     start:null, invalid:false, safeS:s, bestSplits, splits:[], lastSplits:[], nextSplit:null,
     instability:0, spin:0, spinDirection:0, locked:false};
 }
