@@ -6,7 +6,7 @@ export const newSectorTiming=()=>({start:null,lapIndex:null,lastMarker:null,curr
 // Queue crossings first, then process in chronological order across all cars.
 // This prevents array iteration order from lending a driver a future benchmark.
 export function recordSectorCrossings(c,oldS,newS,start,dt,race,trackLength){
-  if(newS<=oldS||race.type==='race'||c.finishTime!==null)return;
+  if(newS<=oldS||c.finishTime!==null)return;
   const step=trackLength/3;
   for(let marker=Math.floor((oldS+1e-7)/step)+1;marker<=Math.floor((newS+1e-7)/step);marker++){
     if(marker<0)continue;
@@ -14,6 +14,18 @@ export function recordSectorCrossings(c,oldS,newS,start,dt,race,trackLength){
     (race.sectorCrossings??=[]).push({id:c.id,marker,time});
   }
 }
+function recordRaceSplit(car, pass) {
+  const timing=car.raceSplits??={marker:-1,time:null,parts:[]};
+  if(pass.marker<=timing.marker)return;
+  if(pass.marker===timing.marker+1&&timing.time!==null)timing.parts.push(pass.time-timing.time);
+  timing.marker=pass.marker;
+  timing.time=pass.time;
+  if(pass.marker%3!==0)return;
+  const lap=car.lapDetails?.[pass.marker/3-1];
+  if(lap&&timing.parts.length===3)lap.sectors=timing.parts;
+  timing.parts=[];
+}
+
 export function flushSectorCrossings(cars,race){
   const pending=race.sectorCrossings??[];if(!pending.length)return;
   const byId=new Map(cars.map(c=>[c.id,c]));
@@ -21,6 +33,7 @@ export function flushSectorCrossings(cars,race){
   pending.sort((a,b)=>a.time-b.time||String(a.id).localeCompare(String(b.id)));
   for(const pass of pending){
     const c=byId.get(pass.id);if(!c)continue;
+    if(race.type==='race'){recordRaceSplit(c,pass);continue;}
     const timing=c.sectorTiming??=newSectorTiming(),sector=(pass.marker+2)%3,lapIndex=Math.floor((pass.marker-1)/3);
     if(timing.lastMarker!==null&&timing.lastMarker!==undefined&&pass.marker<=timing.lastMarker)continue;
     timing.lastMarker=pass.marker;

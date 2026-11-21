@@ -3,6 +3,7 @@ import {at, length, W, H} from './track.js';
 import {drsZoneAt} from './track-profile.js';
 import {sectorDelta, SECTOR_COLORS} from './sector-timing.js';
 import {createRacingAudio} from './racing-audio.js';
+import {fastestLaps, lapHistoryTable, pilotLapRows} from './lap-history.js';
 import {makePilotCar, stepPilot, recoverPilot, setupFor, PILOT_STEP, PILOT_SETUP, PRESETS, SETUP} from './pilot-driving.js';
 
 const format = ms => ms == null ? '—' : `${Math.floor(ms/60000)}:${((ms%60000)/1000).toFixed(3).padStart(6,'0')}`;
@@ -35,7 +36,8 @@ export function bootPilot({canvas,ctx,world}) {
     <div class="pilot-garage">
       <section class="pilot-intro"><span class="pilot-kicker">PRACTICE · INTERLAGOS</span><h1>Dia de <em>prática.</em></h1><p id="pilot-deadline">Consultando o horário do treino…</p>
       <div class="pilot-car-stage"><canvas id="pilot-preview" width="480" height="230" aria-label="Prévia da pintura do seu monoposto"></canvas><div><span>VOLTAS USADAS</span><b id="pilot-quota">0 / 30</b></div></div>
-      <dl class="pilot-times"><div><dt>MELHOR VOLTA</dt><dd id="pilot-best">—</dd></div><div><dt>ÚLTIMA VOLTA</dt><dd id="pilot-last">—</dd></div></dl></section>
+      <dl class="pilot-times"><div><dt>MELHOR VOLTA</dt><dd id="pilot-best">—</dd></div><div><dt>ÚLTIMA VOLTA</dt><dd id="pilot-last">—</dd></div></dl>
+      <section id="pilot-history" hidden><h2>Minhas voltas</h2><div></div></section></section>
       <section class="pilot-form-card">
         <p class="pilot-message" role="status"></p>
         <form id="pilot-register" hidden><h2>Inscrição de piloto</h2><label>Seu nome<input name="name" autocomplete="nickname" minlength="2" maxlength="32" required></label><label>Código do convite<input name="invite" autocomplete="off" required></label><label class="pilot-color">Cor de destaque<input type="color" name="color" value="#d5f561"></label><button class="pilot-button">Entrar no treino</button></form>
@@ -43,7 +45,7 @@ export function bootPilot({canvas,ctx,world}) {
         <details><summary>Configuração avançada</summary><div class="pilot-sliders">${PILOT_SETUP.map(id=>{const s=SETUP[id];return `<label><span>${s.label} <output></output></span><input type="range" name="${id}" min="${s.min}" max="${s.max}" step="${s.step}"></label>`;}).join('')}</div></details>
         <div class="pilot-start-options"><button class="pilot-button" data-pilot-start="pits">Sair dos boxes</button><button class="pilot-button" data-pilot-start="flying">Iniciar volta rápida</button></div>
         <p class="pilot-start-note">Na volta rápida você começa antes da última curva. O tempo começa na linha.</p>
-        <p class="pilot-controls"><kbd>W</kbd> acelerar <kbd>A</kbd><kbd>D</kbd> virar <kbd>S</kbd> frear <kbd>E</kbd> DRS</p></div>
+        <p class="pilot-controls"><kbd>W</kbd> acelerar <kbd>A</kbd><kbd>D</kbd> virar <kbd>S</kbd> frear <kbd>E</kbd> DRS · Scroll para ajustar o zoom</p></div>
         <section id="pilot-results" hidden><h2>Tempos do treino</h2><ol></ol></section>
         <button id="pilot-retry" class="pilot-button" hidden>Tentar novamente</button>
       </section>
@@ -51,6 +53,7 @@ export function bootPilot({canvas,ctx,world}) {
     <section class="pilot-track" hidden>
       <div class="pilot-track-top"><div><span id="pilot-phase">PISTA</span><strong id="pilot-live-time">—</strong></div><div><span>VOLTAS USADAS</span><strong id="pilot-live-quota">0 / 30</strong></div></div>
       <p id="pilot-radio" role="status"></p>
+      <aside id="pilot-top-laps" class="live-top-laps" hidden><b>MINHAS 3 MELHORES</b><ol></ol></aside>
       <div class="pilot-splits"><span>Δ VS. SUA MELHOR VOLTA</span><div>${SECTOR_COLORS.map((color,i)=>`<div><b style="color:${color}">S${i+1}</b><output>—</output></div>`).join('')}</div></div>
       <div class="pilot-track-bottom"><div class="pilot-drive-actions"><button data-action="garage">Voltar à garagem</button><button data-action="recover">Reposicionar</button></div><div class="pilot-speed"><b id="pilot-gear">N</b><strong>0</strong> km/h <span>DRS</span></div></div>
       <div class="pilot-touch" aria-label="Controles de pilotagem">${[['a','◀'],['d','▶'],['e','DRS'],['s','Freio'],['w','Acelerar']].map(([k,label])=>`<button data-key="${k}">${label}</button>`).join('')}</div>
@@ -82,7 +85,7 @@ export function bootPilot({canvas,ctx,world}) {
   }
   if (draft.preset==='manual') preset='manual';
   let state=null, car=null, latest=null, pending=readLocal(pendingKey), saving=false, busy=false;
-  let last=0, accumulator=0, camera=null, width=0, height=0, density=1;
+  let last=0, accumulator=0, camera=null, width=0, height=0, density=1, zoomFactor=1;
   const elapsed = ()=>car?.start == null ? null : Math.round((car.elapsed-car.start)*1000);
   const message = value => {$('.pilot-message').textContent=value;};
   const radio = value => {$('#pilot-radio').textContent=value;};
@@ -106,10 +109,22 @@ export function bootPilot({canvas,ctx,world}) {
     $('#pilot-deadline').textContent=open ? `Janela aberta até ${closeDate.format(new Date(closesAt))} · horário de Brasília.` : 'A janela de prática encerrou.';
     $('#pilot-quota').textContent=$('#pilot-live-quota').textContent=`${used} / ${limit}`;
     $('#pilot-best').textContent=format(best);
-    $('#pilot-last').textContent=format(latest?.ms)+(latest&&!latest.valid?' · inválida':'');
+    const lastLap=latest??state.history?.at(-1);
+    $('#pilot-last').textContent=format(lastLap?.ms)+(lastLap&&!lastLap.valid?' · inválida':'');
     form.hidden=!!driver || !open;
     $('#pilot-setup').hidden=!driver || !open;
     $('#pilot-driver').textContent=driver?.name ?? '';
+    const laps=pilotLapRows(state.history);
+    const history=$('#pilot-history');
+    history.hidden=!driver;
+    history.querySelector('div').innerHTML=lapHistoryTable(laps,format);
+    const top=$('#pilot-top-laps'), fastest=fastestLaps(laps);
+    top.hidden=!fastest.length;
+    top.querySelector('ol').replaceChildren(...fastest.map(lap=>{
+      const item=document.createElement('li');
+      item.textContent=`V${lap.lap} · ${format(lap.ms)}`;
+      return item;
+    }));
     for(const button of ui.querySelectorAll('[data-pilot-start]'))button.disabled=!open||used>=limit||!!pending;
     $('#pilot-retry').hidden=!pending;
     const results=$('#pilot-results');
@@ -206,6 +221,11 @@ export function bootPilot({canvas,ctx,world}) {
   });
   addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
   addEventListener('blur',()=>{keys.clear();touches.clear();});
+  addEventListener('wheel',e=>{
+    if(!car||e.ctrlKey)return;
+    e.preventDefault();
+    zoomFactor=Math.max(.65,Math.min(1.7,zoomFactor*Math.exp(-Math.sign(e.deltaY)*.12)));
+  },{passive:false});
   track.addEventListener('pointerdown',e=>{
     const b=e.target.closest('[data-key]');
     if(b){e.preventDefault();b.setPointerCapture(e.pointerId);touches.set(e.pointerId,b.dataset.key);}
@@ -217,7 +237,7 @@ export function bootPilot({canvas,ctx,world}) {
     canvas.width=Math.round(width*density);canvas.height=Math.round(height*density);
   }
   function paint(target) {
-    const zoom=width<620?.52:.68;
+    const zoom=(width<620?.52:.68)*zoomFactor;
     const look = car && !car.pit ? 86+car.v*2.25 : 60;
     const x=target.x+Math.cos(target.angle)*look,y=target.y+Math.sin(target.angle)*look;
     if(!camera)camera={x,y};
@@ -269,7 +289,7 @@ export function bootPilot({canvas,ctx,world}) {
         }
         $('.pilot-speed span').dataset.available=String(!car.pit&&drsZoneAt(car.s)>=0);
         $('.pilot-speed span').dataset.active=String(car.drs);
-        if(!saving)radio(car.pit?'Segure W para sair dos boxes.':car.start===null?'Cruze a linha para começar o cronômetro.':car.invalid?'Volta invalidada por limite de pista.':latest?`Última volta ${format(latest.ms)}${latest.valid?'':' · inválida'}`:'Volta cronometrada em andamento.');
+        if(!saving)radio(car.pit?'Segure W para sair dos boxes.':car.spin>0?'Rodada · alivie os comandos para recuperar.':car.locked?'Rodas travadas · alivie o freio.':car.off?'Brita · aderência reduzida.':car.start===null?'Cruze a linha para começar o cronômetro.':car.invalid?'Volta inválida após reposicionamento.':latest?`Última volta ${format(latest.ms)}${latest.valid?'':' · inválida'}`:'Volta cronometrada em andamento.');
       }
     } else racingAudio.update();
     paint(car??idle);

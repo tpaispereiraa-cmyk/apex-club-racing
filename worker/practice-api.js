@@ -15,7 +15,9 @@ async function state(db, driver, closesAt, open) {
   if (!driver) return {...basic, driver:null};
   const laps = await row(db, 'SELECT count(*) AS used, min(CASE WHEN valid=1 THEN elapsed_ms END) AS best FROM practice_laps WHERE driver_id=?', driver.id);
   const reference = await row(db, 'SELECT splits FROM practice_laps WHERE driver_id=? AND valid=1 ORDER BY elapsed_ms, splits IS NULL, lap_id LIMIT 1', driver.id);
-  const result = {...basic, driver:{name:driver.name, color:driver.color}, ...laps, bestSplits:reference?.splits?JSON.parse(reference.splits):null};
+  const {results:history}=await db.prepare('SELECT elapsed_ms AS ms, valid, splits FROM practice_laps WHERE driver_id=? ORDER BY rowid').bind(driver.id).all();
+  const result = {...basic, driver:{name:driver.name, color:driver.color}, ...laps, bestSplits:reference?.splits?JSON.parse(reference.splits):null,
+    history:history.map(({ms,valid,splits})=>({ms,valid:!!valid,splits:splits?JSON.parse(splits):null}))};
   if (!open) {
     const board = await db.prepare('SELECT d.name, d.color, count(l.lap_id) AS used, min(CASE WHEN l.valid=1 THEN l.elapsed_ms END) AS best FROM practice_drivers d LEFT JOIN practice_laps l ON d.id=l.driver_id WHERE d.event_id=? GROUP BY d.id ORDER BY best IS NULL, best, d.name_key').bind(EVENT).all();
     result.board = board.results;

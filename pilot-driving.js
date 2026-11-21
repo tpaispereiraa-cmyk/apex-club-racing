@@ -27,7 +27,8 @@ export function makePilotCar(setup,color,bestSplits=null,startMode='pits') {
   return {...pose, s, pit:!flying, v:flying?22:0, steer:0, slip:0, drs:false, off:false,
     team:{color:'#223037',secondary:'#10191c',accent:color}, compound:'medium', number:1,
     model:deriveCar(base,'aurora',0), elapsed:0, startMode, progress:flying?s:0, sector:flying?8:0, gate:0,
-    start:null, invalid:false, safeS:s, bestSplits, splits:[], lastSplits:[], nextSplit:null};
+    start:null, invalid:false, safeS:s, bestSplits, splits:[], lastSplits:[], nextSplit:null,
+    instability:0, spin:0, spinDirection:0, locked:false};
 }
 
 function timeLap(car, delta) {
@@ -68,8 +69,9 @@ function splitAt(car,time) {
   return {ms,delta:reference===null?null:ms-reference,valid:!car.invalid};
 }
 
-export function recoverPilot(car) {
-  Object.assign(car,at(car.safeS),{s:car.safeS,v:0,slip:0,steer:0,invalid:true,off:false});
+export function recoverPilot(car, invalidate=true) {
+  Object.assign(car,at(car.safeS),{s:car.safeS,v:0,slip:0,steer:0,
+    invalid:car.invalid||invalidate,off:false,instability:0,spin:0,locked:false});
 }
 
 export function stepPilot(car, keys) {
@@ -91,15 +93,35 @@ export function stepPilot(car, keys) {
   const input = Number(!!keys.d)-Number(!!keys.a);
   const {model} = car;
   car.steer += (input-car.steer)*fixedStep*(input?9+model.balance*2:15);
-  car.drs = !!keys.e && !!keys.w && !keys.s && !car.off && drsZoneAt(car.s)>=0;
+  car.drs = !!keys.e && !!keys.w && !keys.s && !car.off && car.spin===0 && drsZoneAt(car.s)>=0;
   const forces = physicalForces(model,car.v,0,car.drs);
-  const accel = ((keys.w&&!keys.s?forces.drive:0)-forces.drag)/forces.mass-.31-(keys.s?29+model.braking*.12:0);
-  car.v = clamp(car.v+accel*fixedStep,0,115);
-  if (car.off) car.v *= 1-fixedStep*1.3;
+  const brake = 29+model.braking*.12;
   const lateral = model.mechanicalGrip * (18+forces.load/forces.mass) * (car.off?.43:1);
   const yaw = Math.min(car.v*.13,2.35,lateral/Math.max(11,car.v));
+  const steerLoad = Math.abs(car.steer)*yaw*car.v/Math.max(1,lateral);
+  const grip = clamp(.98-model.balance*.22+model.clA*.018,.82,1.22);
+  const speedLoad=.75+car.v/190+Math.max(0,car.v-65)*.014;
+  const demand = Math.hypot(steerLoad*speedLoad, keys.s?.92:keys.w?.24:0)/grip;
+  car.locked=!!keys.s&&car.v>24&&demand>1.14;
+  const excess = car.v<26 ? 0 : Math.max(0,demand-1.08);
+  car.instability=clamp(car.instability+fixedStep*(excess*6.5-(excess>0?.14:1.25)),0,1);
+  if(car.spin===0&&car.instability>=1&&Math.abs(car.steer)>.36){
+    car.spin=1.15;
+    car.spinDirection=Math.sign(car.steer);
+    car.instability=0;
+    car.drs=false;
+  }
+  const spinning=car.spin>0;
+  const accel = ((keys.w&&!keys.s&&!spinning?forces.drive:0)-forces.drag)/forces.mass-.31-(keys.s?brake*(car.locked?.68:1):0);
+  car.v = clamp(car.v+accel*fixedStep,0,115);
+  if (car.off) car.v *= 1-fixedStep*1.3;
   const turnAuthority = clamp(1+model.balance*.17,.78,1.22);
-  car.angle += car.steer*yaw*turnAuthority*fixedStep;
+  car.angle += car.steer*yaw*turnAuthority*(car.locked?.65:1)*fixedStep;
+  if(spinning){
+    car.spin=Math.max(0,car.spin-fixedStep);
+    car.angle+=car.spinDirection*3.3*fixedStep;
+    car.v*=1-1.8*fixedStep;
+  }
   const slipTarget = -car.steer * clamp((car.v-24)/155,0,.34) * clamp(1.08-model.balance*.65,.65,1.5);
   car.slip += (slipTarget-car.slip)*fixedStep*(5.5+model.clA*.6);
   car.v *= 1-Math.abs(car.steer)*fixedStep*(.11+Math.abs(car.slip)*.46);
@@ -108,10 +130,10 @@ export function stepPilot(car, keys) {
   car.y += Math.sin(car.angle+car.slip)*movement;
   const p = nearest(car.x,car.y);
   car.off = p.d>ROAD*.5;
-  if (p.d>ROAD*.66) car.invalid=true;
   const delta = mod(p.s-car.s+length/2,length)-length/2;
   if (p.d>ROAD*1.45 || Math.abs(delta)>Math.max(20,movement*2.15)) {
-    recoverPilot(car);
+    // Restore position without awarding progress or shortcutting the timing gates.
+    recoverPilot(car,false);
     return null;
   }
   car.s=p.s;

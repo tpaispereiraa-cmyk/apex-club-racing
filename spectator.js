@@ -23,6 +23,7 @@ import {setupManagerUI} from './manager/ui.js';
 import {parseRoute,circuitUrl} from './routes.js';
 import {PHASES,POINTS,championshipOrder} from './tournament.js';
 import {createRacingAudio} from './racing-audio.js';
+import {fastestLaps} from './lap-history.js';
 const $=s=>document.querySelector(s);
 const time=t=>`${String(Math.floor(t/60)).padStart(2,'0')}:${(t%60).toFixed(3).padStart(6,'0')}`;
 export async function bootSpectator({canvas,ctx,world}){
@@ -43,6 +44,17 @@ export async function bootSpectator({canvas,ctx,world}){
   let weekendSeed=2026,gridResults=[],gridCountdown=10;
   let camera={x:W/2,y:H/2,zoom:.4},view={w:innerWidth,h:innerHeight};
   const racingAudio=createRacingAudio();
+  let zoomFactor=1;
+  const topLaps=document.createElement('div');
+  topLaps.className='live-top-laps';
+  topLaps.hidden=true;
+  document.querySelector('.hud-time').append(topLaps);
+  addEventListener('wheel',e=>{
+    if(state!=='racing'||e.ctrlKey||e.target.closest?.('#weekend,#manager,#watch-dashboard,#car-telemetry,#leaderboard,#pit-wall'))return;
+    e.preventDefault();
+    overview=false;
+    zoomFactor=clamp(zoomFactor*Math.exp(-Math.sign(e.deltaY)*.12),.65,1.7);
+  },{passive:false});
   const followed=()=>cars.find(c=>c.id===followedId)||cars[0];
   const resize=()=>{view={w:innerWidth,h:innerHeight};const dpr=Math.min(devicePixelRatio||1,2);canvas.width=view.w*dpr;canvas.height=view.h*dpr;ctx.setTransform(dpr,0,0,dpr,0,0);};
   addEventListener('resize',resize);resize();setupPaddock();
@@ -134,6 +146,9 @@ export async function bootSpectator({canvas,ctx,world}){
     $('#best').textContent='MELHOR VOLTA '+(c.bestLap<Infinity?time(c.bestLap):'—');$('#speed').textContent=Math.round(c.manager?c.v/length*CIRCUIT.metres*3.6:c.v*.57);$('#speedbar').style.width=`${clamp(c.v/c.performance.maxSpeed*100,0,100)}%`;
     $('#following-name').textContent=`#${c.number} · ${c.driver.name}`;$('#following-name').style.color=c.team.color;$('#camera-mode').textContent=overview?'APROXIMAR CÂMERA':'VER PISTA INTEIRA';
     updateMarkup($('#leaderboard'),order.map((entry,i)=>`<button data-follow="${entry.id}" class="${entry.id===c.id?'is-followed':''}" aria-label="Acompanhar carro ${entry.number} da ${entry.team.name}" style="--team:${entry.team.color}"><span>${i+1}</span><i></i><b>#${entry.number}</b><em>${entry.driver.name.split(' ').at(-1)}</em><small>${q?(entry.bestLap<Infinity?time(entry.bestLap):entry.retired?'SEM TEMPO':entry.released?'EM PISTA':'BOX'):entry.retired?'DNF':entry.finishTime!==null?'FINAL':entry.pit?'PIT':entry.drs?'DRS':Math.min(entry.lap,race.laps)+'/'+race.laps}</small></button>`).join(''));
+    const fastest=fastestLaps(c.lapTimes.map((ms,i)=>({ms,lap:i+1})));
+    topLaps.hidden=!fastest.length;
+    updateMarkup(topLaps,`<b>3 MELHORES VOLTAS</b><ol>${fastest.map(l=>`<li>V${l.lap} · ${time(l.ms)}</li>`).join('')}</ol>`);
     const sectorMarkup=q?`<div class="manager-live-sectors" aria-label="Delta acumulado contra a melhor volta do piloto">${visibleSectorSplits(c).map((split,i)=>`<div><b style="color:${SECTOR_COLORS[i]}">S${i+1}</b><strong>${split?split.seconds.toFixed(3)+'s':'—'}</strong><small style="color:${split?.personalDelta<0?'#b9ef78':'#f3bd7b'}">${split?sectorDelta(split.personalDelta):'—'}</small></div>`).join('')}</div>`:'';
     const st=strategyTelemetry(c,race),compound=COMPOUNDS[c.compound],pilotExpanded=$("#car-telemetry details")?.open||false;
     $('#weather-mode').textContent=({auto:'CLIMA VARIÁVEL',dry:'SECO FIXO',rain:'CHUVA FIXA'}[race.weather]);$('#weather-data').textContent=`Água ${Math.round(race.wetness*100)}% · Asfalto ${Math.round(race.trackTemp)}°C`;
@@ -194,7 +209,7 @@ export async function bootSpectator({canvas,ctx,world}){
     const wide=state==='intro'||overview||!followed().released||followed().inGarage;
     if(state==='presentation'){const row=weekendUI.gridPair,front=cars.find(c=>Math.floor(c.grid/2)===row)??cars[0];camera.x+=(front.x-camera.x)*Math.min(1,dt*3);camera.y+=(front.y-camera.y)*Math.min(1,dt*3);camera.zoom+=((view.w<600?.72:.95)-camera.zoom)*Math.min(1,dt*3);}
     else if(wide){camera.x+=(W/2-camera.x)*Math.min(1,dt*3);camera.y+=(H/2-camera.y)*Math.min(1,dt*3);const target=state==='intro'?Math.max(view.w/W,view.h/H)*1.15:Math.min(view.w/W,sceneHeight/H)*.9;camera.zoom+=(target-camera.zoom)*Math.min(1,dt*3);}
-    else{const c=followed();camera.x+=(c.x+Math.cos(c.angle)*c.v*.28-camera.x)*Math.min(1,dt*5);camera.y+=(c.y+Math.sin(c.angle)*c.v*.28-camera.y)*Math.min(1,dt*5);camera.zoom+=((view.w<600?CAMERA_ZOOM.mobile:CAMERA_ZOOM.desktop)-camera.zoom)*Math.min(1,dt*3);}
+    else{const c=followed();camera.x+=(c.x+Math.cos(c.angle)*c.v*.28-camera.x)*Math.min(1,dt*5);camera.y+=(c.y+Math.sin(c.angle)*c.v*.28-camera.y)*Math.min(1,dt*5);camera.zoom+=((view.w<600?CAMERA_ZOOM.mobile:CAMERA_ZOOM.desktop)*zoomFactor-camera.zoom)*Math.min(1,dt*3);}
     ctx.fillStyle='#344e35';ctx.fillRect(0,0,view.w,view.h);ctx.save();if(watchActive){ctx.beginPath();ctx.rect(0,sceneTop,view.w,sceneHeight);ctx.clip();}ctx.translate(view.w*(state==='intro'?.60:.5),watchActive?sceneTop+sceneHeight*.5:view.h*.53);ctx.scale(camera.zoom,camera.zoom);ctx.translate(-camera.x,-camera.y);ctx.drawImage(world,0,0,W,H);
     for(const c of cars){if(state!=='intro'&&(!c.released||c.inGarage||!c.pit&&belowBridge(c.s)))continue;if(state==='racing'&&(c.surface==='gravel'||c.fault?.type==='engine'||c.fault?.type==='cooling')){ctx.fillStyle=c.surface==='gravel'?'#c8b68b65':'#bbc4c17a';for(let i=1;i<=3;i++){ctx.beginPath();ctx.ellipse(c.x-Math.cos(c.angle)*(10+i*8),c.y-Math.sin(c.angle)*(10+i*8),5+i*2,3+i,0,0,Math.PI*2);ctx.fill();}}drawCar(ctx,c,{player:state==='racing'&&c.id===followedId,scale:CAR_SCALE});}ctx.restore();
     if(state==='racing'&&race.wetness>.1){ctx.fillStyle=`rgba(99,139,165,${race.wetness*.09})`;ctx.fillRect(0,0,view.w,view.h);ctx.strokeStyle=`rgba(201,225,239,${race.wetness*.3})`;ctx.lineWidth=1;for(let i=0;i<70*race.wetness;i++){const x=(i*137+now*.15)%view.w,y=(i*197+now*.5)%view.h;ctx.beginPath();ctx.moveTo(x,y);ctx.lineTo(x-6,y+15);ctx.stroke();}}

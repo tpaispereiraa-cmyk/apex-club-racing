@@ -3,9 +3,10 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {practiceAPI} from './worker/practice-api.js';
-import {makePilotCar,setupFor,stepPilot} from './pilot-driving.js';
-import {at} from './track.js';
+import {makePilotCar,recoverPilot,setupFor,stepPilot} from './pilot-driving.js';
+import {at,ROAD} from './track.js';
 import {engineRevs} from './racing-audio.js';
+import {fastestLaps,lapHistoryTable,pilotLapRows} from './lap-history.js';
 
 test('invitation, isolated drivers, atomic quota, retries and deadline',async()=>{
   const sqlite=new DatabaseSync(':memory:');
@@ -32,9 +33,69 @@ test('invitation, isolated drivers, atomic quota, retries and deadline',async()=
   assert.equal(replies.filter(r=>r.ok).length,29);
   const retry=await (await send('/lap',lap,cookie)).json();
   assert.equal(retry.used,30);assert.equal(retry.best,87000);
+  assert.equal(retry.history.length,30);
+  assert.deepEqual(retry.history[0],{ms:87000,valid:true,splits:lap.splits});
+  assert.equal(retry.history.filter(l=>!l.valid).length,29);
   env.PRACTICE_CLOSES_AT='2000-01-01T00:00:00Z';
   assert.equal((await send('/register',{name:'Novo piloto',invite:'test-only'})).status,410);
   assert.equal((await (await send('',null,cookie)).json()).board[0].best,87000);
+});
+
+test('gravel costs speed without invalidating the lap, even after an automatic recovery',()=>{
+  const car=makePilotCar(setupFor('balanced'),'#ffffff',null,'flying');
+  Object.assign(car,at(car.s,ROAD*.72),{v:30});
+  stepPilot(car,{});
+  assert.equal(car.off,true);
+  const speed=car.v;
+  stepPilot(car,{});
+  assert.ok(car.v<speed);
+  assert.equal(car.invalid,false);
+  const progress=car.progress;
+  Object.assign(car,at(car.s,ROAD*1.6));
+  stepPilot(car,{});
+  assert.equal(car.progress,progress);
+  assert.equal(car.invalid,false);
+  recoverPilot(car);
+  assert.equal(car.invalid,true);
+});
+
+test('heavy braking while turning can spin the car; straight braking stays controllable',()=>{
+  function brake(keys){
+    const car=makePilotCar(setupFor('balanced'),'#ffffff',null,'flying');
+    car.v=100;
+    let locked=false,spun=false;
+    for(let i=0;i<60;i++){stepPilot(car,keys);locked||=car.locked;spun||=car.spin>0;}
+    return {locked,spun};
+  }
+  assert.deepEqual(brake({s:true}),{locked:false,spun:false});
+  assert.deepEqual(brake({s:true,d:true}),{locked:true,spun:true});
+});
+
+test('the stable preset is less prone to spinning under a sharp high-speed turn',()=>{
+  function spins(preset){
+    const car=makePilotCar(setupFor(preset),'#ffffff',null,'flying');
+    car.v=89;
+    for(let i=0;i<60;i++){
+      stepPilot(car,{w:true,d:true});
+      if(car.spin>0)return true;
+    }
+    return false;
+  }
+  assert.equal(spins('speed'),true);
+  assert.equal(spins('stable'),false);
+});
+
+test('history shows individual sectors and ranks valid laps only',()=>{
+  const rows=pilotLapRows([
+    {ms:90000,valid:true,splits:[30000,60000,90000]},
+    {ms:91000,valid:true,splits:[29000,60000,91000]},
+    {ms:40000,valid:false,splits:null}
+  ]);
+  assert.deepEqual(rows[1].sectors,[29000,31000,31000]);
+  assert.deepEqual(fastestLaps(rows).map(l=>l.lap),[1,2]);
+  const table=lapHistoryTable(rows,String);
+  assert.match(table,/data-lap-mark="best"[^>]*>29000/);
+  assert.match(table,/data-lap-mark="worst"[^>]*>91000/);
 });
 
 for(const startMode of ['pits','flying'])test(`WASD starts from ${startMode} and clocks two full laps`,()=>{

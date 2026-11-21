@@ -77,3 +77,18 @@
   .pilot-touch { display: flex; position: absolute; bottom: .7rem; left: .7rem; right: .7rem; gap: .4rem; justify-content: space-between; touch-action: none; }
   .pilot-touch button { min-height: 2.8rem; flex: 1; color: #fff; background: #182923ec; border: 1px solid #bbcdb980; touch-action: none; }
 }
+.lap-history-wrap { overflow-x: auto; }
+.lap-history-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: .82rem; text-align: right; }
+.lap-history-table td, .lap-history-table th { padding: .55rem .45rem; border-bottom: 1px solid #c2d5c62b; white-space: nowrap; }
+.lap-history-table th:first-child { text-align: left; }
+.lap-history-table small { color: #c8bba1; }
+[data-lap-mark=best] { color: #b9ef78; }
+[data-lap-mark=worst] { color: #ff9885; }
+.lap-history-key { display: flex; gap: .75rem; font-size: .78rem; }
+.live-top-laps { background: #101e19ee; border: 1px solid #e1efdc45; padding: .5rem .7rem; font-size: .75rem; font-variant-numeric: tabular-nums; }
+.live-top-laps b { color: #b9ef78; font-size: .72rem; }
+.live-top-laps ol { margin: .3rem 0 0; padding-left: 1rem; line-height: 1.55; }
+.hud-time .live-top-laps { position: absolute; right: calc(100% + .7rem); top: 0; text-align: left; white-space: nowrap; }
+#pilot-top-laps { position: absolute; right: clamp(.75rem,4vw,3rem); top: 6rem; }
+#pilot-history { margin-top: 1.1rem; }
+@media (max-width: 650px) { #pilot-top-laps { top: 13.8rem; } }

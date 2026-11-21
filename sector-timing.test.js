@@ -2,7 +2,10 @@ import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import {recordSectorCrossings,flushSectorCrossings,newSectorTiming,visibleSectorSplits,sectorDelta,sectorBoundaries} from './sector-timing.js';
 import {qualifyingSession,practiceSession,sessionComplete} from './weekend.js';
-import {simulateField} from './race-ai.js';
+import {simulateField,createField} from './race-ai.js';
+import {createRace} from './race-systems.js';
+import {sessionReport} from './weekend-archive.js';
+import {reportLapRows} from './lap-history.js';
 
 const car=id=>({id,driver:{name:id},finishTime:null,sectorTiming:newSectorTiming()});
 test('three sectors cover the track and interpolate exact crossing times',()=>{
@@ -62,5 +65,20 @@ for(const type of ['practice','qualifying'])test(`${type}: all actual timed laps
       if(!personalBest||lap.time<personalBest.time)personalBest=lap;
     }
     assert.ok(Math.abs(c.sectorTiming.best.time-c.bestLap)<1e-6);
+  }
+});
+
+test('race sector times survive a checkpoint and appear in the archived lap table',()=>{
+  const race=createRace({type:'race',laps:2,weather:'dry'});
+  let cars=createField(race).slice(0,1),elapsed=0;
+  for(;elapsed<42;elapsed+=1/30)simulateField(cars,1/30,elapsed,race);
+  cars=structuredClone(cars);
+  for(;elapsed<500&&!sessionComplete(cars);elapsed+=1/30)simulateField(cars,1/30,elapsed,race);
+  assert.ok(sessionComplete(cars));
+  const rows=reportLapRows(sessionReport(cars,race).results[0]);
+  assert.equal(rows.length,2);
+  for(const row of rows){
+    assert.equal(row.sectors.length,3);
+    assert.ok(Math.abs(row.sectors.reduce((a,b)=>a+b,0)-row.ms)<.0001);
   }
 });
