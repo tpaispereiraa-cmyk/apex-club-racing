@@ -4,6 +4,8 @@ Protótipo de corrida top-down para navegador, feito em Canvas 2D, sem dependên
 
 Execute `npm run dev` e abra http://127.0.0.1:5173.
 
+**Pilotar** abre `/pilotar`, o treino convidado em Interlagos. Use Node 24 para testar localmente, com o código de convite `apex-local`. O servidor grava a inscrição e as voltas em SQLite na pasta ignorada `artifacts/`. O ambiente hospedado usa D1 com a migração de `drizzle/` e o segredo de runtime `PRACTICE_INVITE`. O limite é de 30 voltas completas por inscrição. A volta de saída fica fora da contagem e o melhor tempo considera as voltas válidas.
+
 **Jogar Manager** abre a carreira local: você assume uma escuderia, desenvolve peças, monta os dois carros, contrata pilotos, ajusta o carro e define estratégia/ordens. A temporada segue 14 etapas, de Melbourne até Interlagos. Saves antigos preservam resultados e recebem os circuitos faltantes. Veja [manager/README.md](manager/README.md).
 
 A rota **/circuitos** reúne os 14 mapas, ordem do campeonato, distâncias, pontuação e links dos dois modos. **/assistir/suzuka** abre uma transmissão totalmente por IA; **/jogar-manager/suzuka** abre a central e encaminha à próxima etapa da carreira. Links antigos `/?circuit=suzuka&career=1` continuam aceitos.

@@ -1,0 +1,68 @@
+.pilot-entry { padding: .8rem 1rem; border: 1px solid #d5f56170; color: var(--lime); text-decoration: none; font-weight: 800; letter-spacing: .09em; font-size: .8rem; }
+.pilot-entry:hover { background: #d5f56120; }
+.pilot-mode > header, .pilot-mode #intro, .pilot-mode #trackcard, .pilot-mode > footer { display: none; }
+#pilot { position: fixed; inset: 0; display: flex; flex-direction: column; color: #f4f6ee; pointer-events: none; }
+.pilot-nav { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem clamp(1rem,4vw,4rem); border-bottom: 1px solid #c2d5c62b; background: #0e1a17e8; pointer-events: auto; }
+.pilot-nav a { color: inherit; text-decoration: none; font-weight: 800; }
+.pilot-nav strong { color: var(--lime); font-style: italic; margin-right: .35rem; }
+.pilot-nav span, .pilot-kicker, .pilot-track-top span { color: #bdd0bf; letter-spacing: .13em; font-size: .8rem; font-weight: 700; }
+.pilot-garage { pointer-events: auto; display: grid; grid-template-columns: 1.05fr .95fr; gap: clamp(1rem,4vw,4rem); align-items: start; overflow-y: auto; height: 100%; padding: clamp(1rem,4vw,3.5rem) clamp(1rem,6vw,7rem); background: linear-gradient(115deg,#0d1715f8 29%,#10201aea 70%,#112019cd); }
+.pilot-garage h1 { font-size: clamp(3.5rem,7.5vw,8rem); margin: .6rem 0 1rem; }
+.pilot-garage p { line-height: 1.5; color: #bfcec3; margin: .5rem 0 1rem; }
+.pilot-intro { min-width: 0; }
+.pilot-car-stage { margin-top: 1.5rem; border: 1px solid #e2f0e123; background: linear-gradient(115deg,#131e1c,#1d3028); position: relative; overflow: hidden; }
+.pilot-car-stage canvas { display: block; width: 100%; max-height: 230px; object-fit: contain; }
+.pilot-car-stage > div { position: absolute; top: .8rem; right: 1rem; text-align: right; }
+.pilot-car-stage span { display: block; color: #bdccc0; font-size: .8rem; }
+.pilot-car-stage b { color: var(--lime); font-size: 1.5rem; }
+.pilot-times { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .75rem; }
+.pilot-times div { padding: .85rem; border: 1px solid #e2f0e124; }
+.pilot-times dt { color: #b9cbbd; font-size: .8rem; }
+.pilot-times dd { margin: .3rem 0 0; font-variant-numeric: tabular-nums; font-size: 1.35rem; }
+.pilot-form-card { padding: clamp(1rem,3vw,2rem); background: #121f1ceb; border: 1px solid #d9e9d62e; }
+.pilot-form-card h2 { font-size: 2.2rem; margin: 0 0 .4rem; }
+#pilot-register { display: grid; gap: .9rem; }
+#pilot-register label { display: grid; gap: .4rem; font-size: .95rem; }
+#pilot-register input { width: 100%; min-height: 2.6rem; padding: .45rem .6rem; background: #0c1715; border: 1px solid #a0b6a257; color: #f0f4ea; font: inherit; border-radius: 0; }
+#pilot-register .pilot-color { display: flex; align-items: center; justify-content: space-between; }
+#pilot-register input[type=color] { width: 4rem; padding: .2rem; }
+.pilot-button { display: block; width: 100%; font-weight: 800; font-size: 1rem; color: #142014; background: var(--lime); padding: .85rem 1rem; border: 0; }
+.pilot-button:disabled { opacity: .5; cursor: default; }
+.pilot-presets { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+.pilot-presets button, .pilot-drive-actions button { border: 1px solid #bbcdb940; background: #182923; padding: .7rem; color: #f3f7f0; font-size: .9rem; text-align: left; }
+.pilot-presets small { display: block; color: #b8caba; line-height: 1.4; margin-top: .2rem; font-size: .8rem; }
+.pilot-presets button[aria-pressed=true] { border-color: var(--lime); color: var(--lime); background: #243728; }
+.pilot-form-card details { margin: 1rem 0; border-top: 1px solid #ccd9ca32; border-bottom: 1px solid #ccd9ca32; padding: .7rem 0; }
+.pilot-form-card summary { cursor: pointer; }
+.pilot-sliders { margin-top: .8rem; display: grid; gap: .7rem; }
+.pilot-sliders label { display: grid; gap: .15rem; color: #d6e5d7; font-size: .9rem; }
+.pilot-sliders label span { display: flex; justify-content: space-between; }
+.pilot-sliders input { width: 100%; accent-color: var(--lime); }
+#pilot .pilot-controls { font-size: .85rem; margin-bottom: 0; }
+.pilot-controls kbd { margin: 0 .2rem; color: var(--lime); }
+#pilot .pilot-message { color: #f1d192; }
+.pilot-message:empty { display: none; }
+.pilot-track { position: relative; flex: 1; }
+.pilot-track-top, .pilot-track-bottom { position: absolute; display: flex; justify-content: space-between; gap: .5rem; left: clamp(.75rem,4vw,3rem); right: clamp(.75rem,4vw,3rem); }
+.pilot-track-top { top: 1rem; }
+.pilot-track-bottom { bottom: 1rem; align-items: end; }
+.pilot-track-top div, .pilot-speed, #pilot-radio { background: #101e19ee; padding: .65rem .95rem; border: 1px solid #e1efdc45; }
+.pilot-track-top strong { display: block; font-size: 1.7rem; font-variant-numeric: tabular-nums; }
+#pilot-radio { position: absolute; top: 5.5rem; left: clamp(.75rem,4vw,3rem); margin: 0; font-size: .9rem; }
+.pilot-speed { white-space: nowrap; }
+.pilot-speed strong { color: var(--lime); font-size: 2.5rem; font-variant-numeric: tabular-nums; }
+.pilot-speed span { margin-left: .4rem; opacity: .4; }
+.pilot-speed span[data-available=true] { opacity: 1; }
+.pilot-speed span[data-active=true] { color: var(--lime); }
+.pilot-drive-actions, .pilot-touch { pointer-events: auto; }
+.pilot-touch { display: none; }
+@media (max-width: 720px) {
+  .pilot-garage { grid-template-columns: 1fr; gap: 1rem; }
+  .pilot-car-stage { margin-top: .65rem; }
+  .pilot-car-stage canvas { max-height: 160px; }
+}
+@media (pointer: coarse) {
+  .pilot-track-bottom { bottom: 5rem; }
+  .pilot-touch { display: flex; position: absolute; bottom: .7rem; left: .7rem; right: .7rem; gap: .4rem; justify-content: space-between; touch-action: none; }
+  .pilot-touch button { min-height: 2.8rem; flex: 1; color: #fff; background: #182923ec; border: 1px solid #bbcdb980; touch-action: none; }
+}

@@ -5,6 +5,7 @@ import {CAR_LENGTH,CAR_WIDTH,GRID_SPACING} from './vehicle-geometry.js';
 import {PIT_LAYOUT,pitPoint,garagePose} from './pit-layout.js';
 import {W,H,ROAD,mod,clamp,path,length,at,nearest,landmarks,CIRCUIT,BRIDGES} from './track.js';
 import {setupCircuits} from './circuit-picker.js';
+import {parseRoute} from './routes.js';
 const canvas=document.querySelector('#game'),ctx=canvas.getContext('2d');
 const $=s=>document.querySelector(s),TAU=Math.PI*2;
 let seed=4827;function rnd(){seed=(seed*16807)%2147483647;return(seed-1)/2147483646;}
@@ -34,7 +35,12 @@ for(const bridge of BRIDGES){
 }
 // Sector timing gates: start/finish and the two equal-distance split lines.
 for(let i=0;i<3;i++){const p=at(i*length/3);g.save();g.translate(p.x,p.y);g.rotate(p.angle);g.strokeStyle=SECTOR_COLORS[(i+2)%3];g.lineWidth=3;g.setLineDash([8,5]);g.beginPath();g.moveTo(0,-ROAD/2);g.lineTo(0,ROAD/2);g.stroke();g.setLineDash([]);g.fillStyle='#10221e';g.fillRect(-24,ROAD/2+10,48,25);g.fillStyle=SECTOR_COLORS[(i+2)%3];g.font='bold 13px Arial';g.textAlign='center';g.fillText(i===0?'S3 / FIM':'S'+i,0,ROAD/2+27);g.restore();}
-setupCircuits();
-bootSpectator({canvas,ctx,world});
+if (parseRoute(location.href).page==='pilot') {
+  const {bootPilot}=await import('./pilot.js');
+  bootPilot({canvas,ctx,world});
+} else {
+  setupCircuits();
+  bootSpectator({canvas,ctx,world});
+}
 
 
