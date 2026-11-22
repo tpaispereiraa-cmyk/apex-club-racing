@@ -5,6 +5,7 @@ import {sectorDelta, SECTOR_COLORS} from './sector-timing.js';
 import {createRacingAudio} from './racing-audio.js';
 import {fastestLaps, lapHistoryTable, pilotLapRows} from './lap-history.js';
 import {addPilotTelemetry} from './pilot-telemetry.js';
+import {addPilotEngineer} from './pilot-engineer.js';
 import {makePilotCar, stepPilot, recoverPilot, setupFor, PILOT_STEP, PILOT_SETUP, PRESETS, SETUP} from './pilot-driving.js';
 
 const format = ms => ms == null ? '—' : `${Math.floor(ms/60000)}:${((ms%60000)/1000).toFixed(3).padStart(6,'0')}`;
@@ -55,7 +56,8 @@ export function bootPilot({canvas,ctx,world}) {
         <form id="pilot-register" hidden><h2>Inscrição de piloto</h2><label>Seu nome<input name="name" autocomplete="nickname" minlength="2" maxlength="32" required></label><label>Código do convite<input name="invite" autocomplete="off" required></label><label class="pilot-color">Cor de destaque<input type="color" name="color" value="#d5f561"></label><button class="pilot-button">Entrar no GP</button></form>
         <div id="pilot-setup" hidden><h2 id="pilot-driver"></h2><p id="pilot-grid" hidden></p>
         <div id="pilot-acerto"><p>Escolha um acerto para a próxima saída.</p><div class="pilot-presets" role="group" aria-label="Acertos sugeridos">${Object.entries(PRESETS).map(([id,p])=>`<button data-preset="${id}" aria-pressed="false"><b>${p.name}</b><small>${p.description}</small></button>`).join('')}</div>
-        <details><summary>Configuração avançada</summary><div class="pilot-sliders">${PILOT_SETUP.map(id=>{const s=SETUP[id];return `<label><span>${s.label} <output></output></span><input type="range" name="${id}" min="${s.min}" max="${s.max}" step="${s.step}"></label>`;}).join('')}</div></details></div>
+        <details><summary>Configuração avançada</summary><div class="pilot-sliders">${PILOT_SETUP.map(id=>{const s=SETUP[id];return `<label><span>${s.label} <output></output></span><input type="range" name="${id}" min="${s.min}" max="${s.max}" step="${s.step}"></label>`;}).join('')}</div></details>
+        <button type="button" id="pilot-open-engineer" aria-haspopup="dialog" aria-controls="pilot-engineer-dialog" hidden>Falar com o engenheiro</button><p id="pilot-engineer-note" role="status" hidden></p></div>
         <div class="pilot-start-options"><button class="pilot-button" data-pilot-start="pits">Sair dos boxes</button><button class="pilot-button" data-pilot-start="flying">Iniciar volta rápida</button><button class="pilot-button" data-pilot-start="grid" hidden>Ir para a largada</button></div>
         <p class="pilot-start-note"></p>
         <p class="pilot-controls"><kbd>W</kbd> acelerar <kbd>A</kbd><kbd>D</kbd> virar <kbd>S</kbd> frear <kbd>E</kbd> DRS · Scroll para ajustar o zoom</p></div>
@@ -110,6 +112,18 @@ export function bootPilot({canvas,ctx,world}) {
   const elapsed = ()=>car?.start == null ? null : Math.round((car.elapsed-car.start)*1000);
   const message = value => {$('.pilot-message').textContent=value;};
   const radio = value => {$('#pilot-radio').textContent=value;};
+  const engineerNote=$('#pilot-engineer-note');
+  addPilotEngineer(ui,{
+    getSetup:()=>setup,
+    applySetup:changes=>{
+      preset='manual';
+      setup={...setup,...changes};
+      syncSetup();
+      engineerNote.hidden=false;
+      engineerNote.textContent='Acerto do engenheiro aplicado. Saia para a pista e compare seus tempos.';
+    },
+    canApply:()=>!!state?.canStart&&state.phase==='practice'&&Date.now()<Date.parse(state.closesAt)
+  });
 
   function syncSetup() {
     for (const b of ui.querySelectorAll('[data-preset]')) b.setAttribute('aria-pressed',String(b.dataset.preset===preset));
@@ -182,6 +196,8 @@ export function bootPilot({canvas,ctx,world}) {
     $('#pilot-setup').hidden=!driver || !open;
     $('#pilot-driver').textContent=driver?.name ?? '';
     $('#pilot-acerto').hidden=!!(race&&lockedSetup)||!canStart;
+    $('#pilot-open-engineer').hidden=phase!=='practice';
+    if(phase!=='practice')engineerNote.hidden=true;
     const gridNote=$('#pilot-grid');
     gridNote.hidden=!race||!grid;
     gridNote.textContent=grid?`P${grid.position} no grid · +${grid.delay/1000} s ao tempo final.${lockedSetup?' Acerto da classificação aplicado.':''}`:'';
@@ -286,11 +302,11 @@ export function bootPilot({canvas,ctx,world}) {
   });
   $('#pilot-setup').addEventListener('click',e=>{
     const selected=e.target.closest('[data-preset]')?.dataset.preset;
-    if(selected) {preset=selected;setup=setupFor(preset);syncSetup();}
+    if(selected) {preset=selected;setup=setupFor(preset);engineerNote.hidden=true;syncSetup();}
   });
   $('#pilot-setup').addEventListener('input', e=>{
     if (!PILOT_SETUP.includes(e.target.name)) return;
-    preset='manual';setup[e.target.name]=Number(e.target.value);syncSetup();
+    preset='manual';setup[e.target.name]=Number(e.target.value);engineerNote.hidden=true;syncSetup();
   });
   async function startDriving(mode) {
     if(busy || pending) return;

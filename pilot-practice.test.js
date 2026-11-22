@@ -4,6 +4,7 @@ import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {practiceAPI} from './worker/practice-api.js';
 import {makePilotCar,recoverPilot,setupFor,stepPilot} from './pilot-driving.js';
+import {proposePilotSetup} from './pilot-engineer.js';
 import {at,ROAD} from './track.js';
 import {engineRevs} from './racing-audio.js';
 import {fastestLaps,lapHistoryTable,pilotLapRows} from './lap-history.js';
@@ -184,6 +185,23 @@ test('the stable preset is less prone to spinning under a sharp high-speed turn'
   }
   assert.equal(spins('speed'),true);
   assert.equal(spins('stable'),false);
+});
+
+test('engineer proposals respect limits and trade straight-line drag for cornering support',()=>{
+  const setup=setupFor('balanced');
+  const measure=report=>{
+    const proposal=proposePilotSetup(setup,report);
+    const adjusted={...setup,...Object.fromEntries(proposal.changes.map(({id,to})=>[id,to]))};
+    return makePilotCar(adjusted,'#ffffff').model;
+  };
+  const base=makePilotCar(setup,'#ffffff').model;
+  const planted=measure('loose'), fast=measure('slow'), direct=measure('wide');
+  assert.ok(planted.clA>base.clA&&planted.cdA>base.cdA&&planted.balance<base.balance);
+  assert.ok(fast.clA<base.clA&&fast.cdA<base.cdA);
+  assert.ok(direct.balance>base.balance);
+  assert.equal(setup.rearWing,5);
+  assert.deepEqual(proposePilotSetup({...setup,brakeBias:58},'braking').changes,[{id:'brakeBias',from:58,to:57}]);
+  assert.deepEqual(proposePilotSetup({...setup,frontWing:0,rearWing:0},'slow').changes,[]);
 });
 
 test('history shows individual sectors and ranks valid laps only',()=>{

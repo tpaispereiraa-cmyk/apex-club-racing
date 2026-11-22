@@ -138,14 +138,14 @@
 .telemetry-glyph i { width: 3px; height: 45%; background: var(--lime); }
 .telemetry-glyph i:nth-child(2) { height: 70%; }
 .telemetry-glyph i:nth-child(3) { height: 100%; }
-.telemetry-dialog { pointer-events: auto; width: min(61rem,calc(100% - 2rem)); max-height: calc(100% - 2rem); padding: 0; margin: auto; border: 1px solid #d5f56165; background: #111d19; color: #eef4e9; box-shadow: 0 1rem 5rem #050c09b3; }
-.telemetry-dialog::backdrop { background: #060e0cd9; backdrop-filter: blur(6px); }
-.telemetry-panel { padding: clamp(1rem,4vw,2.5rem); }
-.telemetry-head { display: flex; justify-content: space-between; align-items: start; gap: 1rem; padding-bottom: 1.05rem; border-bottom: 1px solid #b2c7ac37; }
-.telemetry-head p { margin: 0; }
-.telemetry-head h2 { margin: .2rem 0 0; font-size: clamp(2.7rem,6vw,4.6rem); font-style: italic; line-height: 1; color: var(--lime); }
-.telemetry-close, .telemetry-controls button, .telemetry-controls select, .telemetry-filters button { min-height: 2.65rem; padding: .55rem .8rem; border: 1px solid #c9dac44d; background: #14251f; color: #e8f0e4; font: inherit; font-size: .88rem; }
-.telemetry-close span { margin-left: .25rem; font-size: 1.1rem; }
+.telemetry-dialog, .pilot-engineer { pointer-events: auto; width: min(61rem,calc(100% - 2rem)); max-height: calc(100% - 2rem); padding: 0; margin: auto; border: 1px solid #d5f56165; background: #111d19; color: #eef4e9; box-shadow: 0 1rem 5rem #050c09b3; }
+.telemetry-dialog::backdrop, .pilot-engineer::backdrop { background: #060e0cd9; backdrop-filter: blur(6px); }
+.pilot-dialog-panel { padding: clamp(1rem,4vw,2.5rem); }
+.pilot-dialog-head { display: flex; justify-content: space-between; align-items: start; gap: 1rem; padding-bottom: 1.05rem; border-bottom: 1px solid #b2c7ac37; }
+.pilot-dialog-head p { margin: 0; }
+.pilot-dialog-head h2 { margin: .2rem 0 0; font-size: clamp(2.7rem,6vw,4.6rem); font-style: italic; line-height: 1; color: var(--lime); }
+.pilot-dialog-close, #pilot-open-engineer, .pilot-engineer-options button, .telemetry-controls button, .telemetry-controls select, .telemetry-filters button { min-height: 2.65rem; padding: .55rem .8rem; border: 1px solid #c9dac44d; background: #14251f; color: #e8f0e4; font: inherit; font-size: .88rem; }
+.pilot-dialog-close span { margin-left: .25rem; font-size: 1.1rem; }
 .telemetry-controls { display: flex; flex-wrap: wrap; align-items: end; justify-content: space-between; gap: .65rem; margin: 1rem 0; }
 .telemetry-controls label { display: grid; gap: .3rem; color: #b8c9b9; font-size: .85rem; }
 .telemetry-sessions, .telemetry-filters { display: flex; flex-wrap: wrap; gap: .35rem; }
@@ -175,10 +175,22 @@
 .telemetry-car details > div, .telemetry-car details > p { margin: .45rem 0 0; }
 .telemetry-car dl { display: grid; grid-template-columns: 1fr auto; gap: .2rem .55rem; margin: .35rem 0 .45rem; color: #c4d3c6; }
 .telemetry-car dd { margin: 0; text-align: right; }
+#pilot-open-engineer { width: 100%; margin-bottom: .65rem; border-color: #d5f56175; color: var(--lime); font-weight: 700; }
+#pilot-open-engineer:hover, .pilot-engineer-options button:hover { background: #2c3d29; }
+#pilot #pilot-engineer-note { margin: 0 0 .75rem; color: #d5f561; font-size: .88rem; }
+.pilot-engineer { width: min(48rem,calc(100% - 2rem)); }
+.pilot-engineer-options > div { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: .55rem; }
+.pilot-engineer-options button { text-align: left; padding: .7rem .85rem; }
+.pilot-engineer-options button[aria-pressed=true] { border-color: var(--lime); color: var(--lime); background: #2c3d29; }
+.pilot-engineer-reply { margin-top: 1rem; padding: .85rem 1rem; border: 1px solid #d5f56158; background: #1b2e23; }
+.pilot-engineer-reply p { line-height: 1.5; margin: 0; }
+.pilot-engineer-reply ul { display: flex; flex-wrap: wrap; gap: .45rem; margin: .7rem 0; padding: 0; list-style: none; }
+.pilot-engineer-reply li { padding: .35rem .55rem; border: 1px solid #c9dac44d; color: #cbd8c6; font-size: .86rem; }
 @media (max-width: 540px) {
-  .telemetry-dialog { width: calc(100% - 1rem); max-height: calc(100% - 1rem); }
+  .telemetry-dialog, .pilot-engineer { width: calc(100% - 1rem); max-height: calc(100% - 1rem); }
   .telemetry-controls { align-items: start; }
   .telemetry-table td { font-size: .88rem; }
   .telemetry-car { flex-direction: column; gap: .1rem; }
   .telemetry-car canvas { width: 3rem; }
+  .pilot-engineer-options > div { grid-template-columns: 1fr; }
 }

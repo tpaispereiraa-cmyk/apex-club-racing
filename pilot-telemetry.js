@@ -75,10 +75,10 @@ export function addPilotTelemetry(ui,load,format,getPhase) {
   dialog.id='pilot-telemetry';
   dialog.setAttribute('aria-labelledby','telemetry-title');
   dialog.innerHTML=`
-    <div class="telemetry-panel">
-      <div class="telemetry-head">
+    <div class="pilot-dialog-panel">
+      <div class="pilot-dialog-head">
         <div><p class="pilot-kicker">GP DE INTERLAGOS</p><h2 id="telemetry-title">Telemetria</h2></div>
-        <form method="dialog"><button class="telemetry-close" aria-label="Fechar telemetria" autofocus>Fechar <span aria-hidden="true">×</span></button></form>
+        <form method="dialog"><button class="pilot-dialog-close" aria-label="Fechar telemetria" autofocus>Fechar <span aria-hidden="true">×</span></button></form>
       </div>
       <p id="telemetry-status" class="telemetry-status" role="status"></p>
       <div class="telemetry-body" hidden>
