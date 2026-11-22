@@ -4,7 +4,7 @@ const PRACTICE_CLOSE = '2026-11-23T03:00:00.000Z';
 const DAY = 86_400_000;
 const GRID_STEP = 2000;
 const COOKIE = 'apex_practice';
-const PHASES = [['practice','Treino livre',30],['qualifying','Classificação',3],['race','Corrida',12]];
+const PHASES = [['practice','Treino livre',null],['qualifying','Classificação',3],['race','Corrida',12]];
 const PATTERNS = ['clean','stripe','chevron','checkers','split','bolt'];
 const SETUP_BOUNDS = {frontWing:[0,10],rearWing:[0,10],antiRoll:[0,10],brakeBias:[50,65],rideHeight:[25,65]};
 const json = (data, status = 200, headers = {}) => Response.json(data,{status,headers:{'Cache-Control':'no-store',...headers}});
@@ -80,8 +80,8 @@ async function telemetry(db,driver,sessions,requestedRound) {
 async function reserveAttempt(db,driverId,{id:phase,limit},id,{first=false,setup=null}={}) {
   // An exclusive phase only accepts a fresh run while its quota is empty.
   const max=first&&phase!=='practice'?1:limit;
-  await db.prepare('INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid,round_key,phase,setup_json) SELECT ?,?,0,0,?,?,? WHERE (SELECT count(*) FROM practice_laps WHERE driver_id=? AND round_key=? AND phase=?) < ? ON CONFLICT(driver_id,lap_id) DO NOTHING')
-    .bind(driverId,id,ROUND,phase,setup?JSON.stringify(setup):null,driverId,ROUND,phase,max).run();
+  await db.prepare('INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid,round_key,phase,setup_json) SELECT ?,?,0,0,?,?,? WHERE ? IS NULL OR (SELECT count(*) FROM practice_laps WHERE driver_id=? AND round_key=? AND phase=?) < ? ON CONFLICT(driver_id,lap_id) DO NOTHING')
+    .bind(driverId,id,ROUND,phase,setup?JSON.stringify(setup):null,max,driverId,ROUND,phase,max).run();
   return findAttempt(db,driverId,phase,id);
 }
 
@@ -97,7 +97,7 @@ async function standings(db,phase) {
 
 async function state(db,driver,sessions) {
   const active=sessions.find(s=>s.status==='open');
-  const basic={phase:active?.id??null,closesAt:(active??sessions.at(-1)).closesAt,open:!!active,sessions,limit:active?.limit??12};
+  const basic={phase:active?.id??null,closesAt:(active??sessions.at(-1)).closesAt,open:!!active,sessions,limit:active?active.limit:12};
   if(!driver)return {...basic,driver:null};
   const {results}=await db.prepare('SELECT phase,elapsed_ms AS ms,valid,splits,setup_json FROM practice_laps WHERE driver_id=? AND round_key=? ORDER BY rowid').bind(driver.id,ROUND).all();
   const byPhase=Object.fromEntries(sessions.map(({id})=>[id,results.filter(l=>l.phase===id)]));
@@ -127,7 +127,7 @@ async function state(db,driver,sessions) {
   }
   return {...basic,driver:{name:driver.name,color:driver.color,livery:liveryOf(driver)},sessions:reports,
     used:activeLaps.length,best:best?.ms??null,bestSplits:best?.splits?JSON.parse(best.splits):null,history:historyRows(activeLaps),
-    canStart:!!active&&activeLaps.length<(active.id==='practice'?active.limit:1),grid,lockedSetup:locked?JSON.parse(locked.setup_json):null};
+    canStart:!!active&&(active.id==='practice'||activeLaps.length===0),grid,lockedSetup:locked?JSON.parse(locked.setup_json):null};
 }
 
 export async function practiceAPI(request,env,now=Date.now()) {
@@ -186,7 +186,7 @@ export async function practiceAPI(request,env,now=Date.now()) {
     const setup=locked?JSON.parse(locked.setup_json):parseSetup(payload.setup);
     if(phase==='qualifying'&&!setup)return problem('Acerto da classificação inválido.',400);
     const attempt=await reserveAttempt(db,driver.id,active,id,{first:true,setup});
-    if(!attempt)return problem(phase==='practice'?'Limite de 30 tentativas atingido.':'Você já iniciou esta sessão.',409);
+    if(!attempt)return problem(phase==='practice'?'Não foi possível registrar esta tentativa.':'Você já iniciou esta sessão.',409);
     return json({...await current(),attemptId:attempt.elapsed_ms===0?id:null});
   }
 

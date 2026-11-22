@@ -4,7 +4,7 @@ Protótipo de corrida top-down para navegador, feito em Canvas 2D, sem dependên
 
 Execute `npm run dev` e abra http://127.0.0.1:5173.
 
-**Pilotar** abre `/pilotar`, o treino convidado em Interlagos. Use Node 24 para testar localmente, com o código de convite `apex-local`. O servidor grava a inscrição e as voltas em SQLite na pasta ignorada `artifacts/`. O ambiente hospedado usa D1 com a migração de `drizzle/` e o segredo de runtime `PRACTICE_INVITE`. O limite é de 30 tentativas por inscrição, contadas ao iniciar cada volta cronometrada. A volta de saída fica fora da contagem e o melhor tempo considera as voltas válidas.
+**Pilotar** abre `/pilotar`, o GP de Interlagos por convite. Use Node 24 para testar localmente, com o código de convite `apex-local`. O servidor grava a inscrição e as voltas em SQLite na pasta ignorada `artifacts/`. O ambiente hospedado usa D1 com a migração de `drizzle/` e o segredo de runtime `PRACTICE_INVITE`. O treino livre permite voltas ilimitadas até o fim da sessão, a classificação tem três voltas rápidas e a corrida tem 12. A volta de saída fica fora da contagem e o melhor tempo considera as voltas válidas.
 
 **Jogar Manager** abre a carreira local: você assume uma escuderia, desenvolve peças, monta os dois carros, contrata pilotos, ajusta o carro e define estratégia/ordens. A temporada segue 14 etapas, de Melbourne até Interlagos. Saves antigos preservam resultados e recebem os circuitos faltantes. Veja [manager/README.md](manager/README.md).
 

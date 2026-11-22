@@ -9,7 +9,7 @@ import {at,ROAD} from './track.js';
 import {engineRevs} from './racing-audio.js';
 import {fastestLaps,lapHistoryTable,pilotLapRows} from './lap-history.js';
 
-test('invitation, isolated drivers, atomic quota, retries and deadline',async()=>{
+test('invitation, unlimited practice, session limits, retries and deadline',async()=>{
   const sqlite=new DatabaseSync(':memory:');
   sqlite.exec(readFileSync(new URL('./drizzle/0000_practice.sql',import.meta.url),'utf8'));
   sqlite.exec(readFileSync(new URL('./drizzle/0001_practice_splits.sql',import.meta.url),'utf8'));
@@ -35,6 +35,7 @@ test('invitation, isolated drivers, atomic quota, retries and deadline',async()=
   for(const phase of ['practice','qualifying','race'])priorLap.run(driverId,crypto.randomUUID(),phase);
   const clean=await (await send('',null,cookie)).json();
   assert.equal(clean.used,0);
+  assert.equal(clean.limit,null);
   assert.equal(clean.best,null);
   assert.ok(clean.sessions.every(session=>session.history.length===0));
   assert.equal(sqlite.prepare("SELECT count(*) AS n FROM practice_laps WHERE round_key='legacy'").get().n,1);
@@ -63,16 +64,18 @@ test('invitation, isolated drivers, atomic quota, retries and deadline',async()=
   });
   const replies=await Promise.all(submissions);
   const started=replies.filter(r=>r.response.ok);
-  assert.equal(started.length,28);
-  const last=await (await send('/lap',{id:started.at(-1).id,ms:92000,valid:true,nextId:crypto.randomUUID()},cookie)).json();
-  assert.equal(last.used,30);
-  assert.equal(last.attemptId,null);
-  assert.equal(last.history.at(-1).ms,92000);
+  assert.equal(started.length,33);
+  const beyondLimit=crypto.randomUUID();
+  const last=await (await send('/lap',{id:started.at(-1).id,ms:92000,valid:true,nextId:beyondLimit},cookie)).json();
+  assert.equal(last.used,36);
+  assert.equal(last.attemptId,beyondLimit);
+  assert.equal(last.history.at(-2).ms,92000);
+  assert.equal(last.canStart,true);
   const retry=await (await send('/lap',lap,cookie)).json();
-  assert.equal(retry.used,30);assert.equal(retry.best,87000);
-  assert.equal(retry.history.length,30);
+  assert.equal(retry.used,36);assert.equal(retry.best,87000);
+  assert.equal(retry.history.length,36);
   assert.deepEqual(retry.history[0],{ms:87000,valid:true,splits:lap.splits});
-  assert.equal(retry.history.filter(l=>!l.valid).length,28);
+  assert.equal(retry.history.filter(l=>!l.valid).length,34);
   const liveTelemetry=await (await send('/telemetry',null,cookie)).json();
   const practiceTime=liveTelemetry.sessions[0].entries[0];
   assert.equal(practiceTime.me,true);

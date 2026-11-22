@@ -13,7 +13,7 @@ const closeDate = new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'2-digit'
 const deadline = date => closeDate.format(new Date(Date.parse(date)-60000));
 const patterns = {clean:'Clássica',stripe:'Listras',chevron:'Setas',checkers:'Xadrez',split:'Diagonal',bolt:'Raio'};
 const phases = {
-  practice:{title:'Treino <em>livre.</em>',instructions:'30 tentativas para testar acertos e buscar sua melhor volta.'},
+  practice:{title:'Treino <em>livre.</em>',instructions:'Voltas ilimitadas para testar acertos e buscar seu melhor tempo até o fim da sessão.'},
   qualifying:{title:'Classifi<em>cação.</em>',instructions:'Uma saída com três voltas rápidas seguidas. A melhor define o seu lugar no grid.'},
   race:{title:'Dia de <em>corrida.</em>',instructions:'12 voltas em sequência. Cada posição atrás da pole soma 2 s ao tempo em pista.'}
 };
@@ -69,7 +69,7 @@ export function bootPilot({canvas,ctx,world}) {
       </section>
     </div>
     <section class="pilot-track" hidden>
-      <div class="pilot-track-top"><div><span id="pilot-phase">PISTA</span><strong id="pilot-live-time">—</strong></div><div><span>VOLTAS USADAS</span><strong id="pilot-live-quota">0 / 30</strong></div></div>
+      <div class="pilot-track-top"><div><span id="pilot-phase">PISTA</span><strong id="pilot-live-time">—</strong></div><div><span>VOLTAS USADAS</span><strong id="pilot-live-quota">—</strong></div></div>
       <p id="pilot-radio" role="status"></p>
       <aside id="pilot-top-laps" class="live-top-laps" hidden><b>MINHAS 3 MELHORES</b><ol></ol></aside>
       <div class="pilot-splits"><span>Δ VS. SUA MELHOR VOLTA</span><div>${SECTOR_COLORS.map((color,i)=>`<div><b style="color:${color}">S${i+1}</b><output>—</output></div>`).join('')}</div></div>
@@ -156,7 +156,7 @@ export function bootPilot({canvas,ctx,world}) {
       name.textContent=entry.name;
       time.textContent=report.id==='race'
         ? entry.official==null?`${entry.used?'Abandono':'Sem largada'} · ${entry.completed}/${report.limit}`:`${format(entry.official)} · ${offset}`
-        : report.id==='qualifying'?`${entry.best==null?'Sem tempo':format(entry.best)} · ${offset}`:`${format(entry.best)} · ${entry.used}/${report.limit}`;
+        : report.id==='qualifying'?`${entry.best==null?'Sem tempo':format(entry.best)} · ${offset}`:`${format(entry.best)} · ${entry.used} ${entry.used===1?'tentativa':'tentativas'}`;
       item.append(name,time);
       return item;
     }));
@@ -183,7 +183,7 @@ export function bootPilot({canvas,ctx,world}) {
       time.textContent=deadline(session.closesAt);
       button.querySelector('small').textContent={open:'Em andamento',upcoming:'Aguardando',closed:'Encerrado'}[session.status];
     }
-    $('#pilot-quota').textContent=$('#pilot-live-quota').textContent=driver?`${used} / ${limit}`:`0 / ${limit}`;
+    $('#pilot-quota').textContent=$('#pilot-live-quota').textContent=limit==null?String(used):`${used} / ${limit}`;
     $('#pilot-best').textContent=format(best);
     const lastLap=state.history?.findLast(lap=>lap.ms!=null);
     $('#pilot-last').textContent=lastLap?.ms==null?'—':format(lastLap.ms)+(!lastLap.valid?' · inválida':'');
@@ -204,7 +204,7 @@ export function bootPilot({canvas,ctx,world}) {
     const finished=state.history?.filter(lap=>lap.ms!=null) ?? [];
     $('.pilot-start-note').textContent=canStart
       ? race?'Sua corrida é individual. O resultado geral sai no fim da janela.':'Na volta rápida, você começa antes da última curva. A tentativa conta ao cruzar a linha.'
-      : phase==='practice'?'Você usou todas as tentativas.':finished.length===limit
+      : finished.length===limit
         ? race?`Seu tempo oficial foi ${format(finished.reduce((total,lap)=>total+lap.ms,grid?.delay??0))}.`:'Você completou suas três voltas.'
         : 'Sua saída já foi iniciada. A sessão permite uma saída por piloto.';
     $('.pilot-start-options').dataset.phase=phase ?? '';
@@ -244,7 +244,7 @@ export function bootPilot({canvas,ctx,world}) {
       if(car){car.bestSplits=state.bestSplits??null;attemptId=state.attemptId??null;}
       pending=null;writeLocal(pendingKey,null);
       message('');
-      const sessionEnded=state.used>=state.limit&&!attemptId;
+      const sessionEnded=state.limit!=null&&state.used>=state.limit&&!attemptId;
       if(!state.open||(!attemptId&&car)||sessionEnded) {
         leave();
         message(sessionEnded?'Sessão concluída. Seus tempos estão no histórico.':'A tentativa foi encerrada.');
@@ -399,7 +399,7 @@ export function bootPilot({canvas,ctx,world}) {
           const lap=stepPilot(car,input);
           if(lap) {
             latest=lap;
-            const nextId=state.used<state.limit?crypto.randomUUID():null;
+            const nextId=state.limit==null||state.used<state.limit?crypto.randomUUID():null;
             submitLap({...lap,id:attemptId,nextId,phase:drivingPhase});
           }else if(before===null&&car.start!==null)submitLap({start:true,id:crypto.randomUUID(),phase:drivingPhase,setup:runSetup});
         }
