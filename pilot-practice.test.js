@@ -29,10 +29,14 @@ test('invitation, isolated drivers, atomic quota, retries and deadline',async()=
   assert.equal((await (await send()).json()).driver,null);
   const driverId=sqlite.prepare('SELECT id FROM practice_drivers').get().id;
   sqlite.prepare('INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid) VALUES(?,?,60000,1)').run(driverId,crypto.randomUUID());
+  const priorLap=sqlite.prepare("INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid,round_key,phase) VALUES(?,?,59000,1,'2026-11-21-weekend',?)");
+  for(const phase of ['practice','qualifying','race'])priorLap.run(driverId,crypto.randomUUID(),phase);
   const clean=await (await send('',null,cookie)).json();
   assert.equal(clean.used,0);
   assert.equal(clean.best,null);
+  assert.ok(clean.sessions.every(session=>session.history.length===0));
   assert.equal(sqlite.prepare("SELECT count(*) AS n FROM practice_laps WHERE round_key='legacy'").get().n,1);
+  assert.equal(sqlite.prepare("SELECT count(*) AS n FROM practice_laps WHERE round_key='2026-11-21-weekend'").get().n,3);
   const livery={primary:'#011234',secondary:'#ffeebb',accent:'#00ccff',pattern:'chevron',number:48};
   assert.equal((await send('/livery',{...livery,number:100},cookie)).status,400);
   assert.deepEqual((await (await send('/livery',livery,cookie)).json()).driver.livery,livery);
@@ -68,9 +72,9 @@ test('invitation, isolated drivers, atomic quota, retries and deadline',async()=
   assert.deepEqual(retry.history[0],{ms:87000,valid:true,splits:lap.splits});
   assert.equal(retry.history.filter(l=>!l.valid).length,28);
   delete env.PRACTICE_CLOSES_AT;
-  const qualStart=Date.parse('2026-11-22T03:00:00Z');
-  const raceStart=Date.parse('2026-11-23T03:00:00Z');
-  const raceEnd=Date.parse('2026-11-24T03:00:00Z');
+  const qualStart=Date.parse('2026-11-23T03:00:00Z');
+  const raceStart=Date.parse('2026-11-24T03:00:00Z');
+  const raceEnd=Date.parse('2026-11-25T03:00:00Z');
   assert.equal((await (await send('',null,cookie,qualStart-1)).json()).phase,'practice');
   const afterPractice=await (await send('',null,cookie,qualStart)).json();
   assert.equal(afterPractice.phase,'qualifying');
