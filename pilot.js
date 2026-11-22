@@ -4,6 +4,7 @@ import {drsZoneAt} from './track-profile.js';
 import {sectorDelta, SECTOR_COLORS} from './sector-timing.js';
 import {createRacingAudio} from './racing-audio.js';
 import {fastestLaps, lapHistoryTable, pilotLapRows} from './lap-history.js';
+import {addPilotTelemetry} from './pilot-telemetry.js';
 import {makePilotCar, stepPilot, recoverPilot, setupFor, PILOT_STEP, PILOT_SETUP, PRESETS, SETUP} from './pilot-driving.js';
 
 const format = ms => ms == null ? '—' : `${Math.floor(ms/60000)}:${((ms%60000)/1000).toFixed(3).padStart(6,'0')}`;
@@ -44,6 +45,7 @@ export function bootPilot({canvas,ctx,world}) {
       <section class="pilot-intro"><span class="pilot-kicker">GP DE INTERLAGOS</span><h1>Treino <em>livre.</em></h1><p id="pilot-deadline">Consultando o cronograma…</p>
       <div class="pilot-schedule" role="group" aria-label="Sessões do GP"></div>
       <p class="pilot-session-note" id="pilot-session-note"></p>
+      <button id="pilot-open-telemetry" type="button" aria-haspopup="dialog" aria-controls="pilot-telemetry"><span class="telemetry-glyph" aria-hidden="true"><i></i><i></i><i></i></span><span><b>Telemetria</b><small>Compare voltas e setores dos pilotos</small></span></button>
       <div class="pilot-car-stage"><canvas id="pilot-preview" width="480" height="230" role="img" aria-label="Prévia da pintura do seu monoposto"></canvas><div><span>VOLTAS USADAS</span><b id="pilot-quota">—</b></div></div>
       <dl class="pilot-times"><div><dt>MELHOR VOLTA</dt><dd id="pilot-best">—</dd></div><div><dt>ÚLTIMA VOLTA</dt><dd id="pilot-last">—</dd></div></dl>
       <section id="pilot-history" hidden><h2>Minhas voltas</h2><div></div></section>
@@ -102,6 +104,7 @@ export function bootPilot({canvas,ctx,world}) {
   let state=null, car=null, latest=null, pending=readLocal(pendingKey), saving=false, busy=false;
   let attemptId=null, drivingPhase, runSetup, selectedReport=null;
   let liveryDraft=null, liveryDirty=false;
+  addPilotTelemetry(ui,getState,format,()=>selectedReport??state?.phase);
   if(pending&&!pending.phase){pending=null;writeLocal(pendingKey,null);}
   let last=0, accumulator=0, camera=null, width=0, height=0, density=1, zoomFactor=1;
   const elapsed = ()=>car?.start == null ? null : Math.round((car.elapsed-car.start)*1000);

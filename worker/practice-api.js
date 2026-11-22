@@ -42,7 +42,40 @@ function parseSetup(value) {
   return Object.fromEntries(keys.map(key=>[key,value[key]]));
 }
 
-const findAttempt = (db,driverId,phase,id) => row(db,'SELECT elapsed_ms,next_lap_id FROM practice_laps WHERE driver_id=? AND round_key=? AND phase=? AND lap_id=?',driverId,ROUND,phase,id);
+const findAttempt = (db,driverId,phase,id) => row(db,'SELECT elapsed_ms,next_lap_id,setup_json FROM practice_laps WHERE driver_id=? AND round_key=? AND phase=? AND lap_id=?',driverId,ROUND,phase,id);
+
+async function telemetry(db,driver,sessions,requestedRound) {
+  const {results:archive}=await db.prepare('SELECT DISTINCT l.round_key FROM practice_laps l JOIN practice_drivers d ON d.id=l.driver_id WHERE d.event_id=? AND l.valid=1 AND l.elapsed_ms>0 ORDER BY l.round_key DESC').bind(EVENT).all();
+  const rounds=[...new Set([ROUND,...archive.map(lap=>lap.round_key)])];
+  const round=requestedRound??ROUND;
+  if(!rounds.includes(round))return null;
+  const {results}=await db.prepare(`SELECT l.driver_id,d.name,d.color,d.livery,l.phase,l.elapsed_ms,l.splits,
+    coalesce(l.setup_json, CASE WHEN l.phase IN ('qualifying','race') THEN (
+      SELECT q.setup_json FROM practice_laps q WHERE q.driver_id=l.driver_id AND q.round_key=l.round_key
+      AND q.phase='qualifying' AND q.setup_json IS NOT NULL ORDER BY q.rowid LIMIT 1
+    ) END) AS setup_json
+    FROM practice_laps l JOIN practice_drivers d ON d.id=l.driver_id
+    WHERE d.event_id=? AND l.round_key=? AND l.valid=1 AND l.elapsed_ms>0 ORDER BY l.rowid`).bind(EVENT,round).all();
+  const groups=new Map(PHASES.map(([id])=>[id,new Map()]));
+  for(const lap of results){
+    const group=groups.get(lap.phase);
+    if(!group)continue;
+    if(!group.has(lap.driver_id))group.set(lap.driver_id,{
+      name:lap.name,me:lap.driver_id===driver.id,livery:liveryOf(lap),best:null,sectors:[null,null,null]
+    });
+    const entry=group.get(lap.driver_id);
+    const splits=lap.splits?JSON.parse(lap.splits):null;
+    const sectors=splits?.map((ms,i)=>ms-(splits[i-1]??0))??null;
+    const setup=lap.setup_json?JSON.parse(lap.setup_json):null;
+    if(!entry.best||lap.elapsed_ms<entry.best.ms)entry.best={ms:lap.elapsed_ms,sectors,setup};
+    for(const [index,ms] of (sectors??[]).entries()){
+      if(!entry.sectors[index]||ms<entry.sectors[index].ms)entry.sectors[index]={ms,setup};
+    }
+  }
+  return {round,rounds,sessions:sessions.map(({id,name,status})=>({
+    id,name,status:round===ROUND?status:'closed',entries:[...groups.get(id).values()]
+  }))};
+}
 
 async function reserveAttempt(db,driverId,{id:phase,limit},id,{first=false,setup=null}={}) {
   // An exclusive phase only accepts a fresh run while its quota is empty.
@@ -105,6 +138,11 @@ export async function practiceAPI(request,env,now=Date.now()) {
   const driver=token?await row(db,'SELECT id,name,color,livery FROM practice_drivers WHERE id=? AND event_id=?',await hash(token),EVENT):null;
   const current=()=>state(db,driver,sessions);
   if(request.method==='GET'&&url.pathname==='/api/practice')return json(await current());
+  if(request.method==='GET'&&url.pathname==='/api/practice/telemetry'){
+    if(!driver)return problem('Use o navegador da sua inscrição para ver o comparativo do GP.',401);
+    const report=await telemetry(db,driver,sessions,url.searchParams.get('round'));
+    return report?json(report):problem('Rodada indisponível.',404);
+  }
   if(request.method!=='POST')return problem('Rota inexistente.',404);
   const origin=request.headers.get('Origin');
   if(origin&&origin!==url.origin)return problem('Origem da solicitação inválida.',403);
@@ -144,7 +182,8 @@ export async function practiceAPI(request,env,now=Date.now()) {
   if(!lapId(id))return problem('Identificador de volta inválido.',400);
   if(!active||phase!==active.id)return problem('A janela dessa sessão encerrou. Consulte o cronograma do GP.',410);
   if(payload.start===true){
-    const setup=phase==='qualifying'?parseSetup(payload.setup):null;
+    const locked=phase==='race'?await row(db,"SELECT setup_json FROM practice_laps WHERE driver_id=? AND round_key=? AND phase='qualifying' AND setup_json IS NOT NULL ORDER BY rowid LIMIT 1",driver.id,ROUND):null;
+    const setup=locked?JSON.parse(locked.setup_json):parseSetup(payload.setup);
     if(phase==='qualifying'&&!setup)return problem('Acerto da classificação inválido.',400);
     const attempt=await reserveAttempt(db,driver.id,active,id,{first:true,setup});
     if(!attempt)return problem(phase==='practice'?'Limite de 30 tentativas atingido.':'Você já iniciou esta sessão.',409);
@@ -161,6 +200,8 @@ export async function practiceAPI(request,env,now=Date.now()) {
       .bind(ms,Number(valid),splits?JSON.stringify(splits):null,nextId??null,driver.id,ROUND,phase,id).run();
     attempt=await findAttempt(db,driver.id,phase,id);
   }
-  const next=attempt.next_lap_id?await reserveAttempt(db,driver.id,active,attempt.next_lap_id):null;
+  const next=attempt.next_lap_id?await reserveAttempt(db,driver.id,active,attempt.next_lap_id,{
+    setup:attempt.setup_json?JSON.parse(attempt.setup_json):null
+  }):null;
   return json({...await current(),attemptId:next?.elapsed_ms===0?attempt.next_lap_id:null});
 }
