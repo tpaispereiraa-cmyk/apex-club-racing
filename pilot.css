@@ -30,7 +30,8 @@
 .pilot-button:disabled { opacity: .5; cursor: default; }
 .pilot-start-options { display: grid; grid-template-columns: 1fr 1fr; gap: .55rem; }
 .pilot-start-options[data-phase=race] { grid-template-columns: 1fr; }
-.pilot-start-options [data-pilot-start=pits] { border: 1px solid #a1b49580; background: #1e3026; color: #e1ecd9; }
+.pilot-start-options [data-pilot-start=pits], #pilot-warmup { border: 1px solid #a1b49580; background: #1e3026; color: #e1ecd9; }
+#pilot-warmup { margin-top: .55rem; }
 #pilot .pilot-start-note { font-size: .85rem; margin-bottom: .5rem; }
 .pilot-presets { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
 .pilot-presets button, .pilot-drive-actions button { border: 1px solid #bbcdb940; background: #182923; padding: .7rem; color: #f3f7f0; font-size: .9rem; text-align: left; }

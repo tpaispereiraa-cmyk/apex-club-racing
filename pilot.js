@@ -20,6 +20,8 @@ const phases = {
 const draftKey = 'apex-practice-setup-v1';
 const pendingKey = 'apex-practice-pending-v1';
 const runKey = 'apex-pilot-run-v1';
+const warmupKey = 'apex-pilot-warmup-v1';
+const warmupLimit = 20;
 function readLocal(key) { try {return JSON.parse(localStorage.getItem(key));} catch {return null;} }
 function writeLocal(key, value) {
   try {localStorage.setItem(key,JSON.stringify(value));return true;} catch {return false;}
@@ -62,6 +64,7 @@ export function bootPilot({canvas,ctx,world}) {
         <details><summary>Configuração avançada</summary><div class="pilot-sliders">${PILOT_SETUP.map(id=>{const s=SETUP[id];return `<label><span>${s.label} <output></output></span><input type="range" name="${id}" min="${s.min}" max="${s.max}" step="${s.step}"></label>`;}).join('')}</div></details>
         <button type="button" id="pilot-open-engineer" aria-haspopup="dialog" aria-controls="pilot-engineer-dialog" hidden>Falar com o engenheiro</button><p id="pilot-engineer-note" role="status" hidden></p></div>
         <div class="pilot-start-options"><button class="pilot-button" data-pilot-start="pits">Sair dos boxes</button><button class="pilot-button" data-pilot-start="flying">Iniciar volta rápida</button><button class="pilot-button" data-pilot-start="grid" hidden>Ir para a largada</button><button class="pilot-button" id="pilot-resume" hidden>Continuar</button></div>
+        <button class="pilot-button" id="pilot-warmup" hidden>Treinar</button>
         <p class="pilot-start-note"></p>
         <p class="pilot-controls"><kbd>W</kbd> acelerar <kbd>A</kbd><kbd>D</kbd> virar <kbd>S</kbd> frear <kbd>E</kbd> DRS · Scroll para ajustar o zoom</p></div>
         <form id="pilot-livery" hidden><h2>Pintura do carro</h2><div class="pilot-paints">
@@ -109,6 +112,7 @@ export function bootPilot({canvas,ctx,world}) {
   let state=null, car=null, latest=null, pending=readLocal(pendingKey), saving=false, busy=false;
   let attemptId=null, drivingPhase, runSetup, selectedReport=null;
   let savedRun=readLocal(runKey), lastCheckpoint=0, releaseRunLock;
+  let warmup=readLocal(warmupKey);
   let liveryDraft=null, liveryDirty=false;
   addPilotTelemetry(ui,getState,format,()=>selectedReport??state?.phase);
   if(pending&&!pending.phase){pending=null;writeLocal(pendingKey,null);}
@@ -121,6 +125,9 @@ export function bootPilot({canvas,ctx,world}) {
     && run.round===state.round && run.phase===state.phase && run.driver===state.driver?.name;
   const canResume = run => matchesRun(run) && (run.attemptId
     ? run.attemptId===state.attemptId : state.canStart);
+  const warmupLaps = () => warmup?.round===state.round && warmup?.driver===state.driver?.name ? warmup.used : 0;
+  const canWarmup = () => !!state.driver && state.phase==='qualifying' && state.canStart
+    && !canResume(savedRun) && !pending && warmupLaps()<warmupLimit;
 
   function checkpoint() {
     if(!car||!timed(drivingPhase))return false;
@@ -254,6 +261,9 @@ export function bootPilot({canvas,ctx,world}) {
     resume.hidden=!resumable;
     resume.disabled=!!(pending||savedRun?.operation);
     resume.textContent=race?'Continuar Race':'Continuar Qualy';
+    const warmupButton=$('#pilot-warmup');
+    warmupButton.hidden=!canWarmup();
+    warmupButton.textContent=`Treinar · ${warmupLimit-warmupLaps()} voltas restantes`;
     if(resumable)$('.pilot-start-note').textContent='Retome do ponto em que parou. O prazo da sessão continua valendo.';
     for(const button of ui.querySelectorAll('[data-pilot-start]')){
       button.hidden=resumable||(button.dataset.pilotStart==='grid')!==race;
@@ -390,6 +400,7 @@ export function bootPilot({canvas,ctx,world}) {
       if(!await lockRun()){message('Já há uma saída aberta em outra aba.');return;}
       savedRun=readLocal(runKey);
       state=await getState();
+      warmup=readLocal(warmupKey)??warmup;
       showState();
       if(mode==='resume'){
         if(!canResume(savedRun)||savedRun.operation)return;
@@ -401,26 +412,34 @@ export function bootPilot({canvas,ctx,world}) {
         return;
       }
       if(canResume(savedRun)||matchesRun(savedRun)&&savedRun.operation)return;
+      const training=mode==='warmup';
+      if(training&&!canWarmup())return;
       if(!state.driver||!state.canStart||(mode==='grid')!==(state.phase==='race'))return;
-      if(liveryDirty){
+      if(liveryDirty&&!training){
         if(!paintForm.reportValidity())return;
         await saveLivery();
         if(!state.canStart||(mode==='grid')!==(state.phase==='race'))return;
       }
-      drivingPhase=state.phase;
-      selectedReport=drivingPhase;
+      drivingPhase=training?'warmup':state.phase;
+      selectedReport=state.phase;
       runSetup={...(drivingPhase==='race'?state.lockedSetup??setup:setup)};
-      car=makePilotCar(runSetup,state.driver.livery,state.bestSplits??null,mode);
+      car=makePilotCar(runSetup,training?liveryDraft??state.driver.livery:state.driver.livery,
+        training?null:state.bestSplits??null,training?'flying':mode);
       camera=null;accumulator=0;last=0;latest=null;
       garage.hidden=true;track.hidden=false;
-      track.querySelector('[data-action=garage]').textContent=drivingPhase==='practice'?'Voltar à garagem':'Pausar';
+      track.querySelector('[data-action=garage]').textContent=timed(drivingPhase)?'Pausar':'Voltar à garagem';
       checkpoint();
-      radio(car.pit?'Segure W para sair dos boxes.':mode==='grid'?'Segure W para largar.':'Cruze a linha para iniciar a volta rápida.');
+      if(training){
+        $('#pilot-top-laps').hidden=true;
+        $('#pilot-live-quota').textContent=`${warmupLaps()} / ${warmupLimit}`;
+      }
+      radio(training?'Aquecimento livre. Suas voltas do Qualy ficam disponíveis na garagem.':car.pit?'Segure W para sair dos boxes.':mode==='grid'?'Segure W para largar.':'Cruze a linha para iniciar a volta rápida.');
     } catch(error){message(error.message);}
     finally {busy=false;if(!car)unlockRun();}
   }
   for(const button of ui.querySelectorAll('[data-pilot-start]'))button.onclick=()=>startDriving(button.dataset.pilotStart);
   $('#pilot-resume').onclick=()=>startDriving('resume');
+  $('#pilot-warmup').onclick=()=>startDriving('warmup');
   $('#pilot-retry').onclick=()=>pending||savedRun?.operation?retryLap():refresh();
   function exitTrack() {
     if(timed(drivingPhase)){
@@ -493,7 +512,17 @@ export function bootPilot({canvas,ctx,world}) {
           accumulator-=PILOT_STEP;
           const before=car.start;
           const lap=stepPilot(car,input);
-          if(lap) {
+          if(drivingPhase==='warmup'){
+            if(!lap)continue;
+            latest=lap;
+            warmup={round:state.round,driver:state.driver.name,used:warmupLaps()+1};
+            writeLocal(warmupKey,warmup);
+            $('#pilot-live-quota').textContent=`${warmup.used} / ${warmupLimit}`;
+            if(warmup.used>=warmupLimit){
+              leave();
+              message('Aquecimento concluído. Suas voltas do Qualy estão disponíveis.');
+            }
+          }else if(lap) {
             latest=lap;
             const nextId=state.limit==null||state.used<state.limit?crypto.randomUUID():null;
             submitLap({...lap,id:attemptId,nextId,phase:drivingPhase});
@@ -502,7 +531,7 @@ export function bootPilot({canvas,ctx,world}) {
       }
       if(car) {
         if(!saving&&now-lastCheckpoint>=500&&timed(drivingPhase)){checkpoint();lastCheckpoint=now;}
-        $('#pilot-phase').textContent=car.pit?'PIT LANE':car.start!==null?(drivingPhase==='race'?'VOLTA DE CORRIDA':'VOLTA RÁPIDA'):car.startMode==='grid'?'LARGADA':car.startMode==='flying'?'APROXIMAÇÃO':'VOLTA DE SAÍDA';
+        $('#pilot-phase').textContent=drivingPhase==='warmup'?'AQUECIMENTO':car.pit?'PIT LANE':car.start!==null?(drivingPhase==='race'?'VOLTA DE CORRIDA':'VOLTA RÁPIDA'):car.startMode==='grid'?'LARGADA':car.startMode==='flying'?'APROXIMAÇÃO':'VOLTA DE SAÍDA';
         $('#pilot-live-time').textContent=format(elapsed());
         $('.pilot-speed strong').textContent=Math.round(car.v*3.6);
         const brake=keys.has('s')||[...touches.values()].includes('s');
