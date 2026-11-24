@@ -192,6 +192,7 @@
 .telemetry-table td:first-child { color: #c6d5c5; font-weight: 700; }
 .telemetry-table td:last-child > b { color: var(--lime); font-size: 1.2rem; white-space: nowrap; }
 .telemetry-table td > small { display: block; margin-top: .25rem; font-size: .8rem; color: #bbccbd; }
+.telemetry-replay { margin-top: .4rem; padding: .4rem .65rem; border: 1px solid #d5f56170; background: #192b23; color: var(--lime); font: inherit; font-size: .85rem; white-space: nowrap; }
 .telemetry-table tr.is-you td { background: #d5f56110; }
 .telemetry-table .is-you td:nth-child(3) > small { color: var(--lime); }
 .telemetry-car { display: flex; gap: .45rem; align-items: flex-start; }

@@ -58,6 +58,7 @@ async function telemetry(db,driver,sessions,requestedRound,replayReady) {
   const round=requestedRound??ROUND;
   if(!rounds.includes(round))return null;
   const {results}=await db.prepare(`SELECT l.driver_id,d.name,d.color,d.livery,l.phase,l.elapsed_ms,l.splits,
+    CASE WHEN l.phase='qualifying' AND l.replay_json IS NOT NULL THEN l.lap_id END AS replay_id,
     coalesce(l.setup_json, CASE WHEN l.phase IN ('qualifying','race') THEN (
       SELECT q.setup_json FROM practice_laps q WHERE q.driver_id=l.driver_id AND q.round_key=l.round_key
       AND q.phase='qualifying' AND q.setup_json IS NOT NULL ORDER BY q.rowid LIMIT 1
@@ -76,7 +77,10 @@ async function telemetry(db,driver,sessions,requestedRound,replayReady) {
     const splits=lap.splits?JSON.parse(lap.splits):null;
     const sectors=splits?.map((ms,i)=>ms-(splits[i-1]??0))??null;
     const setup=lap.setup_json?JSON.parse(lap.setup_json):null;
-    if(!entry.best||lap.elapsed_ms<entry.best.ms)entry.best={ms:lap.elapsed_ms,sectors,setup};
+    if(!entry.best||lap.elapsed_ms<entry.best.ms||lap.elapsed_ms===entry.best.ms&&!entry.best.replayId&&lap.replay_id){
+      entry.best={ms:lap.elapsed_ms,sectors,setup};
+      if(lap.replay_id)entry.best.replayId=lap.replay_id;
+    }
     for(const [index,ms] of (sectors??[]).entries()){
       if(!entry.sectors[index]||ms<entry.sectors[index].ms)entry.sectors[index]={ms,setup};
     }
@@ -204,6 +208,17 @@ export async function practiceAPI(request,env,now=Date.now()) {
     const report=await telemetry(db,driver,sessions,url.searchParams.get('round'),replayReady);
     return report?json(report):problem('Rodada indisponível.',404);
   }
+  if(request.method==='GET'&&url.pathname==='/api/practice/qualifying-replay'){
+    if(!driver)return problem('Use o navegador da sua inscrição para assistir à volta.',401);
+    const lap=url.searchParams.get('lap');
+    if(!lapId(lap))return problem('Replay de classificação indisponível.',404);
+    const record=await row(db,`SELECT d.name,d.color,d.livery,l.elapsed_ms AS ms,l.replay_json AS frames
+      FROM practice_laps l JOIN practice_drivers d ON d.id=l.driver_id
+      WHERE d.event_id=? AND l.lap_id=? AND l.phase='qualifying' AND l.valid=1
+      AND l.elapsed_ms>0 AND l.replay_json IS NOT NULL`,EVENT,lap);
+    return record?json({name:record.name,livery:liveryOf(record),ms:record.ms,frames:record.frames})
+      :problem('Replay de classificação indisponível.',404);
+  }
   if(request.method!=='POST')return problem('Rota inexistente.',404);
   const origin=request.headers.get('Origin');
   if(origin&&origin!==url.origin)return problem('Origem da solicitação inválida.',403);
@@ -256,7 +271,7 @@ export async function practiceAPI(request,env,now=Date.now()) {
   if(!Number.isInteger(ms)||ms<35000||ms>1800000||typeof valid!=='boolean')return problem('Tempo de volta inválido.',400);
   if(nextId!=null&&(!lapId(nextId)||nextId===id))return problem('Próxima volta inválida.',400);
   if(splits!=null&&(!Array.isArray(splits)||splits.length!==3||!splits.every(Number.isSafeInteger)||splits[0]<=0||splits[1]<=splits[0]||splits[2]<=splits[1]||splits[2]!==ms))return problem('Parciais inválidas.',400);
-  if(replay!=null&&(phase!=='race'||!validReplay(replay,ms)))return problem('Gravação de volta inválida.',400);
+  if(replay!=null&&(!['race','qualifying'].includes(phase)||!validReplay(replay,ms)))return problem('Gravação de volta inválida.',400);
   let attempt=await findAttempt(db,driver.id,phase,id);
   if(!attempt)return problem('Essa tentativa não foi iniciada. Recarregue a página para começar outra volta.',409);
   if(attempt.elapsed_ms===0){

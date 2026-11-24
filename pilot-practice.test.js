@@ -128,9 +128,10 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
     }
     assert.fail('Stint should be complete');
   };
+  const qualifyReplay=Array.from({length:611},(_,i)=>[i*100,100+i,200,0,Math.round(i/610*10000)]);
   const qualified=await stint(cookie,'qualifying',qualStart,[
     {ms:68000,splits:[19000,44000,68000],valid:true},
-    {ms:61000,splits:[21000,43000,61000],valid:true},
+    {ms:61000,splits:[21000,43000,61000],valid:true,replay:qualifyReplay},
     {ms:45000,splits:[15000,30000,45000],valid:false},
     67000, 66000, 64000
   ]);
@@ -140,9 +141,18 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   const comparisons=(await (await send('/telemetry',null,secondCookie,qualStart)).json()).sessions[1].entries;
   const first=comparisons.find(e=>!e.me);
   assert.equal(first.best.ms,61000);
+  assert.ok(first.best.replayId);
   assert.equal(first.best.setup.rearWing,9);
   assert.equal(first.sectors.reduce((sum,s)=>sum+s.ms,0),59000);
   assert.equal(comparisons.find(e=>e.me).best.ms,62000);
+  assert.equal(comparisons.find(e=>e.me).best.replayId,undefined);
+  const qualifyPath=`/qualifying-replay?lap=${first.best.replayId}`;
+  const recordedQualy=await (await send(qualifyPath,null,secondCookie,qualStart)).json();
+  assert.equal(recordedQualy.name,'Piloto Teste');
+  assert.equal(recordedQualy.ms,61000);
+  assert.deepEqual(JSON.parse(recordedQualy.frames),qualifyReplay);
+  assert.equal((await send(qualifyPath,null,undefined,qualStart)).status,401);
+  assert.equal((await send('/qualifying-replay?lap=missing',null,cookie,qualStart)).status,404);
   assert.equal((await (await send('',null,cookie,qualEnd-1)).json()).phase,'qualifying');
   for(const now of [qualEnd,raceStart-1]){
     const gap=await (await send('',null,cookie,now)).json();

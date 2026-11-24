@@ -69,7 +69,7 @@ function carDetails(entry,metric) {
   return box;
 }
 
-export function addPilotTelemetry(ui,load,format,getPhase) {
+export function addPilotTelemetry(ui,load,format,getPhase,playLap) {
   const dialog=document.createElement('dialog');
   dialog.className='telemetry-dialog';
   dialog.id='pilot-telemetry';
@@ -144,6 +144,27 @@ export function addPilotTelemetry(ui,load,format,getPhase) {
         ? sectors.map((ms,i)=>`S${i+1} ${shortSector(ms)}`).join(' · ')
         : entry.ms===leader.ms?'Referência':`+${shortSector(entry.ms-leader.ms)}`;
       pace.append(mainTime,detail);
+      if(phase==='qualifying'&&metric==='best'){
+        const id=entry.best.replayId;
+        if(id){
+          const button=document.createElement('button');
+          button.type='button';
+          button.className='telemetry-replay';
+          button.textContent='Ver replay';
+          button.setAttribute('aria-label',`Ver replay da volta de ${entry.name}`);
+          button.onclick=async()=>{
+            button.disabled=true;
+            try{await playLap(id);}
+            catch(error){status.hidden=false;status.textContent=error.message;}
+            finally{button.disabled=false;}
+          };
+          pace.append(button);
+        }else{
+          const note=document.createElement('small');
+          note.textContent='Volta sem gravação';
+          pace.append(note);
+        }
+      }
       return row;
     }));
   }

@@ -122,7 +122,10 @@ export function bootPilot({canvas,ctx,world}) {
   let warmup=readLocal(warmupKey);
   let replayFrames=[], replayPollAt=0;
   let liveryDraft=null, liveryDirty=false;
-  addPilotTelemetry(ui,getState,format,()=>selectedReport??state?.phase);
+  addPilotTelemetry(ui,getState,format,()=>selectedReport??state?.phase,async id=>{
+    const {openQualifyingReplay}=await import('./pilot-race-replay.js');
+    await openQualifyingReplay(ui,world,getState,format,id);
+  });
   if(pending&&!pending.phase){pending=null;writeLocal(pendingKey,null);}
   let last=0, accumulator=0, camera=null, width=0, height=0, density=1, zoomFactor=1;
   const elapsed = ()=>car?.start == null ? null : Math.round((car.elapsed-car.start)*1000);
@@ -547,7 +550,7 @@ export function bootPilot({canvas,ctx,world}) {
             latest=lap;
             const nextId=state.limit==null||state.used<state.limit?crypto.randomUUID():null;
             let replay;
-            if(drivingPhase==='race'){
+            if(timed(drivingPhase)){
               if(replayFrames[0]?.[0]===0){
                 replay=replayFrames;
                 if(replay.at(-1)[0]===lap.ms)replay.pop();
@@ -557,9 +560,9 @@ export function bootPilot({canvas,ctx,world}) {
             }
             submitLap({...lap,id:attemptId,nextId,phase:drivingPhase,replay});
           }else if(before===null&&car.start!==null){
-            if(drivingPhase==='race')replayFrames=[replayPoint(car,0,0)];
+            if(timed(drivingPhase))replayFrames=[replayPoint(car,0,0)];
             submitLap({start:true,id:crypto.randomUUID(),phase:drivingPhase,setup:runSetup});
-          }else if(drivingPhase==='race'&&car.start!==null&&replayFrames.length){
+          }else if(timed(drivingPhase)&&car.start!==null&&replayFrames.length){
             const ms=elapsed();
             if(ms-replayFrames.at(-1)[0]>=100){
               const start=car.gate-car.sector*length/8;

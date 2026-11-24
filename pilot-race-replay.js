@@ -30,23 +30,61 @@ export function replayPosition(driver,time) {
 
 const positionPriority={finished:0,driving:1,missing:1,waiting:2,dnf:3};
 
-export async function openRaceReplay(ui,world,getState,format) {
+export function openRaceReplay(ui,world,getState,format) {
+  return openReplay(ui,world,getState,format);
+}
+
+export function openQualifyingReplay(ui,world,getState,format,lap) {
+  return openReplay(ui,world,getState,format,lap);
+}
+
+async function loadReplay(getState,lap,isOpen) {
+  if(lap){
+    const {name,livery,ms,frames}=await getState(`/qualifying-replay?lap=${encodeURIComponent(lap)}`);
+    return {limit:1,drivers:[{name,livery,grid:1,delay:0,duration:ms,official:ms,recorded:1,completed:1,
+      laps:[{start:0,end:ms,frames:JSON.parse(frames)}]}],unavailable:false};
+  }
+  const manifest=await getState('/replay');
+  const drivers=[];
+  let unavailable=false;
+  for(let i=0;i<manifest.drivers.length&&isOpen();i+=4){
+    const batch=await Promise.all(manifest.drivers.slice(i,i+4).map(async driver=>{
+      let elapsed=0;
+      try{
+        const {laps}=await getState(`/replay?grid=${driver.grid}`);
+        const timeline=laps.map(({ms,frames})=>{
+          const start=elapsed;
+          elapsed+=ms;
+          return {start,end:elapsed,frames:frames?JSON.parse(frames):null};
+        });
+        return {...driver,laps:timeline,duration:elapsed};
+      }catch{
+        unavailable=true;
+        return null;
+      }
+    }));
+    drivers.push(...batch.filter(Boolean));
+  }
+  return {drivers,limit:manifest.limit,unavailable};
+}
+
+async function openReplay(ui,world,getState,format,lap) {
   const dialog=document.createElement('dialog');
   dialog.className='pilot-replay';
   dialog.setAttribute('aria-labelledby','pilot-replay-title');
   dialog.innerHTML=`
-    <header><div><span>GP DE INTERLAGOS</span><h2 id="pilot-replay-title">Assista a corrida</h2></div>
+    <header><div><span>GP DE INTERLAGOS${lap?' · CLASSIFICAÇÃO':''}</span><h2 id="pilot-replay-title">${lap?'Replay da volta':'Assista a corrida'}</h2></div>
     <button type="button" data-close>Fechar</button></header>
-    <p role="status">Carregando a corrida…</p>
+    <p role="status">Carregando ${lap?'a volta':'a corrida'}…</p>
     <div class="pilot-replay-content" hidden>
-      <canvas aria-label="Replay da corrida no circuito de Interlagos"></canvas>
-      <section aria-label="Posições na corrida"><h3>Posições</h3><ol></ol></section>
+      <canvas aria-label="Replay no circuito de Interlagos"></canvas>
+      <section aria-label="${lap?'Tempo da volta':'Posições na corrida'}"><h3>${lap?'Piloto':'Posições'}</h3><ol></ol></section>
     </div>
     <div class="pilot-replay-controls" hidden>
       <button type="button" data-play>Reproduzir</button>
-      <label class="pilot-replay-timeline"><span>Tempo da corrida</span><input type="range" min="0" value="0" step="1"><output></output></label>
+      <label class="pilot-replay-timeline"><span>Tempo da ${lap?'volta':'corrida'}</span><input type="range" min="0" value="0" step="1"><output></output></label>
       <label>Velocidade <select data-speed><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
-      <label>Câmera <select data-camera><option value="leader">Líder</option><option value="map">Circuito inteiro</option></select></label>
+      <label>Câmera <select data-camera><option value="leader">${lap?'Seguir piloto':'Líder'}</option><option value="map">Circuito inteiro</option></select></label>
     </div>`;
   ui.append(dialog);
   const $=selector=>dialog.querySelector(selector);
@@ -57,27 +95,7 @@ export async function openRaceReplay(ui,world,getState,format) {
 
   const status=$('[role=status]');
   try{
-    const manifest=await getState('/replay');
-    const drivers=[];
-    let unavailable=false;
-    for(let i=0;i<manifest.drivers.length&&dialog.open;i+=4){
-      const batch=await Promise.all(manifest.drivers.slice(i,i+4).map(async driver=>{
-        let elapsed=0;
-        try{
-          const {laps}=await getState(`/replay?grid=${driver.grid}`);
-          const timeline=laps.map(({ms,frames})=>{
-            const start=elapsed;
-            elapsed+=ms;
-            return {start,end:elapsed,frames:frames?JSON.parse(frames):null};
-          });
-          return {...driver,laps:timeline,duration:elapsed};
-        }catch{
-          unavailable=true;
-          return null;
-        }
-      }));
-      drivers.push(...batch.filter(Boolean));
-    }
+    const {drivers,limit,unavailable}=await loadReplay(getState,lap,()=>dialog.open);
     if(!dialog.open)return;
     if(!drivers.some(driver=>driver.recorded)){
       status.textContent=unavailable?'Não foi possível carregar as gravações. Feche e tente novamente.':'Ainda não há voltas gravadas para reproduzir.';
@@ -92,11 +110,12 @@ export async function openRaceReplay(ui,world,getState,format) {
     const seek=$('input'), clock=$('output'), play=$('[data-play]'), speed=$('[data-speed]'), view=$('[data-camera]');
     const duration=Math.max(...drivers.map(driver=>driver.delay+driver.duration));
     seek.max=duration;
-    for(const driver of drivers){
+    for(const driver of lap?[]:drivers){
       const option=new Option(driver.name,String(driver.grid));
       view.add(option);
     }
-    let time=0, previous=0, playing=false, refreshAt=0;
+    let time=0, previous=0, playing=!!lap, refreshAt=0;
+    if(playing)play.textContent='Pausar';
     let camera;
     play.onclick=()=>{
       if(time>=duration)time=0;
@@ -111,7 +130,11 @@ export async function openRaceReplay(ui,world,getState,format) {
       if(time>=duration&&playing){playing=false;play.textContent='Rever';}
       seek.value=Math.round(time);
       clock.textContent=`${format(Math.round(time))} / ${format(duration)}`;
-      const positions=drivers.map(driver=>({...driver,...replayPosition(driver,time)})).sort((a,b)=>
+      const positions=drivers.map(driver=>{
+        const position=replayPosition(driver,time);
+        if(lap&&position.status==='finished')position.pose=interpolateReplay(driver.laps[0].frames,driver.duration);
+        return {...driver,...position};
+      }).sort((a,b)=>
         positionPriority[a.status]-positionPriority[b.status]
         || (a.status==='finished'&&b.status==='finished'?a.official-b.official:b.progress-a.progress)
         || a.grid-b.grid);
@@ -121,9 +144,9 @@ export async function openRaceReplay(ui,world,getState,format) {
           const name=document.createElement('b'), label=document.createElement('small');
           name.textContent=driver.name;
           name.style.borderColor=driver.livery.accent;
-          label.textContent={waiting:`Grid P${driver.grid} · +${driver.delay/1000}s`,
-            driving:`Volta ${Math.floor(driver.progress)+1}/${manifest.limit}`,finished:format(driver.official),
-            missing:'Volta sem gravação',dnf:`Abandono · ${driver.completed}/${manifest.limit}`}[driver.status];
+          label.textContent=lap?format(driver.official):{waiting:`Grid P${driver.grid} · +${driver.delay/1000}s`,
+            driving:`Volta ${Math.floor(driver.progress)+1}/${limit}`,finished:format(driver.official),
+            missing:'Volta sem gravação',dnf:`Abandono · ${driver.completed}/${limit}`}[driver.status];
           item.append(name,label);
           return item;
         }));
