@@ -28,8 +28,9 @@ function writeLocal(key, value) {
 }
 
 async function getState(path='', data) {
-  const response = await fetch('/api/practice'+path,data ? {
-    method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(data),keepalive:true
+  const body=data ? JSON.stringify(data) : null;
+  const response = await fetch('/api/practice'+path,body ? {
+    method:'POST',headers:{'Content-Type':'application/json'},body,keepalive:body.length<48000
   } : {cache:'no-store'});
   const result = await response.json().catch(()=>null);
   if (!response.ok || !result) {
@@ -40,6 +41,11 @@ async function getState(path='', data) {
   return result;
 }
 
+function replayPoint(car,ms,progress) {
+  const angle=Math.atan2(Math.sin(car.angle),Math.cos(car.angle));
+  return [ms,Math.round(car.x),Math.round(car.y),Math.round(angle*1000),progress];
+}
+
 export function bootPilot({canvas,ctx,world}) {
   document.body.classList.add('pilot-mode');
   document.title='APEX CLUB — GP de Interlagos';
@@ -47,6 +53,7 @@ export function bootPilot({canvas,ctx,world}) {
   ui.id='pilot';
   ui.innerHTML=`
     <nav class="pilot-nav"><a href="/" aria-label="Voltar ao APEX CLUB"><strong>A</strong> APEX CLUB</a><span>INTERLAGOS / PILOTAR</span><button id="pilot-sound" class="icon-button" aria-pressed="false">SOM OFF</button></nav>
+    <button type="button" id="pilot-replay-banner" hidden><strong>Assista a corrida</strong><span>Replay do GP de Interlagos →</span></button>
     <div class="pilot-garage">
       <section class="pilot-intro"><span class="pilot-kicker">GP DE INTERLAGOS</span><h1>Treino <em>livre.</em></h1><p id="pilot-deadline">Consultando o cronograma…</p>
       <div class="pilot-schedule" role="group" aria-label="Sessões do GP"></div>
@@ -113,6 +120,7 @@ export function bootPilot({canvas,ctx,world}) {
   let attemptId=null, drivingPhase, runSetup, selectedReport=null;
   let savedRun=readLocal(runKey), lastCheckpoint=0, releaseRunLock;
   let warmup=readLocal(warmupKey);
+  let replayFrames=[], replayPollAt=0;
   let liveryDraft=null, liveryDirty=false;
   addPilotTelemetry(ui,getState,format,()=>selectedReport??state?.phase);
   if(pending&&!pending.phase){pending=null;writeLocal(pendingKey,null);}
@@ -132,7 +140,7 @@ export function bootPilot({canvas,ctx,world}) {
   function checkpoint() {
     if(!car||!timed(drivingPhase))return false;
     savedRun={round:state.round,phase:drivingPhase,driver:state.driver.name,car,setup:runSetup,
-      attemptId,latest,camera,zoomFactor,operation:pending};
+      attemptId,latest,camera,zoomFactor,operation:pending,replayFrames};
     return writeLocal(runKey,savedRun);
   }
 
@@ -211,6 +219,7 @@ export function bootPilot({canvas,ctx,world}) {
   function showState() {
     if (!state) return;
     const {driver,phase,used=0,best,open,limit,closesAt,canStart,grid,lockedSetup}=state;
+    $('#pilot-replay-banner').hidden=!(driver&&state.replayReady);
     const race=phase==='race';
     const resumable=canResume(savedRun);
     const upcoming=state.sessions.find(session=>session.status==='upcoming');
@@ -405,6 +414,7 @@ export function bootPilot({canvas,ctx,world}) {
       if(mode==='resume'){
         if(!canResume(savedRun)||savedRun.operation)return;
         ({car,attemptId,phase:drivingPhase,setup:runSetup,latest,camera,zoomFactor}=savedRun);
+        replayFrames=savedRun.replayFrames??[];
         selectedReport=drivingPhase;
         last=0;accumulator=0;
         garage.hidden=true;track.hidden=false;
@@ -425,6 +435,7 @@ export function bootPilot({canvas,ctx,world}) {
       runSetup={...(drivingPhase==='race'?state.lockedSetup??setup:setup)};
       car=makePilotCar(runSetup,training?liveryDraft??state.driver.livery:state.driver.livery,
         training?null:state.bestSplits??null,training?'flying':mode);
+      replayFrames=[];
       camera=null;accumulator=0;last=0;latest=null;
       garage.hidden=true;track.hidden=false;
       track.querySelector('[data-action=garage]').textContent=timed(drivingPhase)?'Pausar':'Voltar à garagem';
@@ -440,6 +451,16 @@ export function bootPilot({canvas,ctx,world}) {
   for(const button of ui.querySelectorAll('[data-pilot-start]'))button.onclick=()=>startDriving(button.dataset.pilotStart);
   $('#pilot-resume').onclick=()=>startDriving('resume');
   $('#pilot-warmup').onclick=()=>startDriving('warmup');
+  $('#pilot-replay-banner').onclick=async event=>{
+    const button=event.currentTarget;
+    button.disabled=true;
+    message('');
+    try{
+      const {openRaceReplay}=await import('./pilot-race-replay.js');
+      await openRaceReplay(ui,world,getState,format);
+    }catch(error){message(error.message);}
+    finally{button.disabled=false;}
+  };
   $('#pilot-retry').onclick=()=>pending||savedRun?.operation?retryLap():refresh();
   function exitTrack() {
     if(timed(drivingPhase)){
@@ -525,8 +546,27 @@ export function bootPilot({canvas,ctx,world}) {
           }else if(lap) {
             latest=lap;
             const nextId=state.limit==null||state.used<state.limit?crypto.randomUUID():null;
-            submitLap({...lap,id:attemptId,nextId,phase:drivingPhase});
-          }else if(before===null&&car.start!==null)submitLap({start:true,id:crypto.randomUUID(),phase:drivingPhase,setup:runSetup});
+            let replay;
+            if(drivingPhase==='race'){
+              if(replayFrames[0]?.[0]===0){
+                replay=replayFrames;
+                if(replay.at(-1)[0]===lap.ms)replay.pop();
+                replay.push(replayPoint(car,lap.ms,10000));
+              }
+              replayFrames=[replayPoint(car,0,0)];
+            }
+            submitLap({...lap,id:attemptId,nextId,phase:drivingPhase,replay});
+          }else if(before===null&&car.start!==null){
+            if(drivingPhase==='race')replayFrames=[replayPoint(car,0,0)];
+            submitLap({start:true,id:crypto.randomUUID(),phase:drivingPhase,setup:runSetup});
+          }else if(drivingPhase==='race'&&car.start!==null&&replayFrames.length){
+            const ms=elapsed();
+            if(ms-replayFrames.at(-1)[0]>=100){
+              const start=car.gate-car.sector*length/8;
+              const progress=Math.max(0,Math.min(9999,Math.round((car.progress-start)/length*10000)));
+              replayFrames.push(replayPoint(car,ms,progress));
+            }
+          }
         }
       }
       if(car) {
@@ -556,7 +596,13 @@ export function bootPilot({canvas,ctx,world}) {
   syncSetup();drawPreview();refresh();requestAnimationFrame(frame);
   setInterval(()=>{
     if(car||busy||saving||!state)return;
+    const now=Date.now();
+    if(state.driver&&!state.replayReady&&now>=Date.parse(state.replayAt)&&now>=replayPollAt){
+      replayPollAt=now+5000;
+      refresh();
+      return;
+    }
     const transition=state.open ? state.closesAt : state.sessions.find(session=>session.status==='upcoming')?.opensAt;
-    if(Date.now()>=Date.parse(transition))refresh();
+    if(now>=Date.parse(transition))refresh();
   },1000);
 }

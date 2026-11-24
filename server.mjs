@@ -19,6 +19,9 @@ if (!sqlite.prepare('PRAGMA table_info(practice_laps)').all().some(c=>c.name==='
   const migration=await readFile(new URL('drizzle/0002_pilot_weekend.sql',root),'utf8');
   sqlite.exec(`BEGIN;\n${migration}\nCOMMIT;`);
 }
+if (!sqlite.prepare('PRAGMA table_info(practice_laps)').all().some(c=>c.name==='replay_json')) {
+  sqlite.exec(await readFile(new URL('drizzle/0003_race_replay.sql',root),'utf8'));
+}
 const DB={prepare(sql){const stmt=sqlite.prepare(sql);return{bind(...args){return{
   first:async()=>stmt.get(...args)??null,
   all:async()=>({results:stmt.all(...args)}),

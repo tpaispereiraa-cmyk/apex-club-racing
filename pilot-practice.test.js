@@ -8,12 +8,14 @@ import {proposePilotSetup} from './pilot-engineer.js';
 import {at,ROAD} from './track.js';
 import {engineRevs} from './racing-audio.js';
 import {fastestLaps,lapHistoryTable,pilotLapRows} from './lap-history.js';
+import {interpolateReplay,replayPosition} from './pilot-race-replay.js';
 
 test('invitation, unlimited practice, session limits, retries and deadline',async()=>{
   const sqlite=new DatabaseSync(':memory:');
   sqlite.exec(readFileSync(new URL('./drizzle/0000_practice.sql',import.meta.url),'utf8'));
   sqlite.exec(readFileSync(new URL('./drizzle/0001_practice_splits.sql',import.meta.url),'utf8'));
   sqlite.exec(readFileSync(new URL('./drizzle/0002_pilot_weekend.sql',import.meta.url),'utf8'));
+  sqlite.exec(readFileSync(new URL('./drizzle/0003_race_replay.sql',import.meta.url),'utf8'));
   const env={PRACTICE_INVITE:'test-only',PRACTICE_CLOSES_AT:'2090-01-01T00:00:00Z',DB:{prepare(sql){return{bind(...args){return{
     first:async()=>sqlite.prepare(sql).get(...args)??null,
     all:async()=>({results:sqlite.prepare(sql).all(...args)}),
@@ -92,6 +94,7 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   const qualEnd=Date.parse('2026-11-24T20:00:00Z');
   const raceStart=Date.parse('2026-11-24T20:30:00Z');
   const raceEnd=Date.parse('2026-11-25T02:59:59.999Z');
+  const replayAt=Date.parse('2026-11-25T03:01:00Z');
   assert.equal((await (await send('',null,cookie,qualStart-1)).json()).phase,'practice');
   const afterPractice=await (await send('',null,cookie,qualStart)).json();
   assert.equal(afterPractice.phase,'qualifying');
@@ -153,12 +156,47 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   assert.equal(race.lockedSetup.rearWing,9);
   assert.equal(race.sessions[1].board[0].best,61000);
   assert.equal((await send('/register',{name:'Novo piloto',invite:'test-only'},undefined,raceStart)).status,410);
-  await stint(cookie,'race',raceStart,Array(10).fill(60000));
+  const replay=Array.from({length:601},(_,i)=>[i*100,100+i,200,0,Math.round(i/600*10000)]);
+  await stint(cookie,'race',raceStart,Array(10).fill({ms:60000,valid:true,replay}));
   await stint(secondCookie,'race',raceStart,Array(10).fill(59900));
   assert.equal((await (await send('',null,cookie,raceEnd-1)).json()).sessions[2].board,undefined);
-  const final=await (await send('',null,cookie,raceEnd)).json();
+  for(const now of [raceEnd-1,raceEnd,replayAt-1]){
+    const hidden=await (await send('',null,cookie,now)).json();
+    assert.equal(hidden.sessions[2].board,undefined);
+    assert.equal(hidden.replayReady,false);
+    assert.equal(Date.parse(hidden.replayAt),replayAt);
+    assert.equal((await send('/replay',null,cookie,now)).status,404);
+    assert.equal((await send('/replay?grid=1',null,cookie,now)).status,404);
+    const telemetry=await (await send('/telemetry',null,cookie,now)).json();
+    assert.deepEqual(telemetry.sessions[2].entries,[]);
+  }
+  const final=await (await send('',null,cookie,replayAt)).json();
   assert.equal(final.phase,null);
+  assert.equal(final.replayReady,true);
   assert.deepEqual(final.sessions[2].board.map(r=>[r.name,r.official]),[['Piloto Teste',600000],['Mais um',601000]]);
+  assert.equal((await send('/replay',null,undefined,replayAt)).status,401);
+  const manifest=await (await send('/replay',null,cookie,replayAt)).json();
+  assert.deepEqual(manifest.drivers.map(d=>[d.name,d.delay,d.official,d.recorded]),[
+    ['Piloto Teste',0,600000,10],['Mais um',2000,601000,0]
+  ]);
+  const playback=await (await send('/replay?grid=1',null,cookie,replayAt)).json();
+  assert.equal(playback.laps.length,10);
+  assert.deepEqual(JSON.parse(playback.laps[0].frames),replay);
+  assert.equal((await send('/replay?grid=99',null,cookie,replayAt)).status,404);
+});
+
+test('race replay interpolates poses and applies grid delay once',()=>{
+  const frames=[[0,0,10,3130,0],[100,10,20,-3130,10000]];
+  const midpoint=interpolateReplay(frames,50);
+  assert.deepEqual([midpoint.x,midpoint.y,midpoint.progress],[5,15,.5]);
+  assert.ok(Math.abs(midpoint.angle-Math.PI)<.001);
+  const driver={delay:2000,duration:200,official:2200,completed:2,
+    laps:[{start:0,end:100,frames},{start:100,end:200,frames}]};
+  assert.equal(replayPosition(driver,1999).status,'waiting');
+  assert.equal(replayPosition(driver,2050).progress,.5);
+  assert.equal(replayPosition(driver,2150).progress,1.5);
+  assert.equal(replayPosition(driver,2199).status,'driving');
+  assert.equal(replayPosition(driver,2200).status,'finished');
 });
 
 test('gravel costs speed without invalidating the lap, even after an automatic recovery',()=>{

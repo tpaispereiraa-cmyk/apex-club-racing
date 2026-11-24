@@ -18,6 +18,8 @@ const row = (db,sql,...args) => db.prepare(sql).bind(...args).first();
 const lapId = id => typeof id==='string'&&/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(id);
 const isColor = value => typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value);
 
+const replayTime = race => Math.ceil(Date.parse(race.closesAt)/60000)*60000+60000;
+
 function calendar(env,now) {
   const practiceClose=Date.parse(env.PRACTICE_CLOSES_AT);
   return PHASES.map(([id,name,limit,opensAt,closesAt],i)=>{
@@ -50,7 +52,7 @@ function parseSetup(value) {
 
 const findAttempt = (db,driverId,phase,id) => row(db,'SELECT elapsed_ms,next_lap_id,setup_json FROM practice_laps WHERE driver_id=? AND round_key=? AND phase=? AND lap_id=?',driverId,ROUND,phase,id);
 
-async function telemetry(db,driver,sessions,requestedRound) {
+async function telemetry(db,driver,sessions,requestedRound,replayReady) {
   const {results:archive}=await db.prepare('SELECT DISTINCT l.round_key FROM practice_laps l JOIN practice_drivers d ON d.id=l.driver_id WHERE d.event_id=? AND l.valid=1 AND l.elapsed_ms>0 ORDER BY l.round_key DESC').bind(EVENT).all();
   const rounds=[...new Set([ROUND,...archive.map(lap=>lap.round_key)])];
   const round=requestedRound??ROUND;
@@ -61,7 +63,8 @@ async function telemetry(db,driver,sessions,requestedRound) {
       AND q.phase='qualifying' AND q.setup_json IS NOT NULL ORDER BY q.rowid LIMIT 1
     ) END) AS setup_json
     FROM practice_laps l JOIN practice_drivers d ON d.id=l.driver_id
-    WHERE d.event_id=? AND l.round_key=? AND l.valid=1 AND l.elapsed_ms>0 ORDER BY l.rowid`).bind(EVENT,round).all();
+    WHERE d.event_id=? AND l.round_key=? AND l.valid=1 AND l.elapsed_ms>0
+    AND (l.phase<>'race' OR ?) ORDER BY l.rowid`).bind(EVENT,round,Number(round!==ROUND||replayReady)).all();
   const groups=new Map(PHASES.map(([id])=>[id,new Map()]));
   for(const lap of results){
     const group=groups.get(lap.phase);
@@ -101,9 +104,54 @@ async function standings(db,phase) {
   return results;
 }
 
-async function state(db,driver,sessions) {
+function validReplay(frames,ms) {
+  if(!Array.isArray(frames)||frames.length<2||frames.length>Math.ceil(ms/100)+2
+    ||frames[0]?.[0]!==0||frames.at(-1)?.[0]!==ms)return false;
+  let previous=-1;
+  for(const frame of frames){
+    if(!Array.isArray(frame)||frame.length!==5||!frame.every(Number.isInteger))return false;
+    const [time,x,y,angle,progress]=frame;
+    if(time<=previous||Math.abs(x)>100000||Math.abs(y)>100000||Math.abs(angle)>3142||progress<0||progress>10000)return false;
+    previous=time;
+  }
+  return true;
+}
+
+async function raceReplay(db,race,gridPosition) {
+  const grid=await standings(db,'qualifying');
+  if(gridPosition!==null){
+    const entry=grid[Number(gridPosition)-1];
+    if(!/^[1-9][0-9]*$/.test(gridPosition)||!entry)return problem('Piloto indisponível no replay.',404);
+    const {results:laps}=await db.prepare(`SELECT elapsed_ms AS ms,replay_json AS frames
+      FROM practice_laps WHERE driver_id=? AND round_key=? AND phase='race' AND elapsed_ms>0 ORDER BY rowid`)
+      .bind(entry.id,ROUND).all();
+    return json({laps});
+  }
+  const {results}=await db.prepare(`SELECT l.driver_id,d.name,d.color,d.livery,l.elapsed_ms AS ms,
+    l.replay_json IS NOT NULL AS recorded
+    FROM practice_laps l JOIN practice_drivers d ON d.id=l.driver_id
+    WHERE d.event_id=? AND l.round_key=? AND l.phase='race' ORDER BY l.rowid`).bind(EVENT,ROUND).all();
+  const participants=new Map();
+  for(const lap of results){
+    if(!participants.has(lap.driver_id))participants.set(lap.driver_id,{name:lap.name,livery:liveryOf(lap),laps:[]});
+    if(lap.ms>0)participants.get(lap.driver_id).laps.push(lap);
+  }
+  const drivers=grid.flatMap(({id},i)=>{
+    const entry=participants.get(id);
+    if(!entry)return [];
+    const delay=i*GRID_STEP, completed=entry.laps.length;
+    const official=completed===race.limit?entry.laps.reduce((total,lap)=>total+lap.ms,delay):null;
+    return [{name:entry.name,livery:entry.livery,grid:i+1,delay,completed,official,
+      recorded:entry.laps.filter(lap=>lap.recorded).length}];
+  });
+  return json({limit:race.limit,drivers});
+}
+
+async function state(db,driver,sessions,now) {
   const active=sessions.find(s=>s.status==='open');
-  const basic={round:ROUND,phase:active?.id??null,closesAt:(active??sessions.at(-1)).closesAt,open:!!active,sessions,limit:(active??sessions.at(-1)).limit};
+  const race=sessions.at(-1), replayAt=replayTime(race), replayReady=now>=replayAt;
+  const basic={round:ROUND,phase:active?.id??null,closesAt:(active??race).closesAt,open:!!active,sessions,limit:(active??race).limit,
+    replayAt:new Date(replayAt).toISOString(),replayReady};
   if(!driver)return {...basic,driver:null};
   const {results}=await db.prepare('SELECT lap_id AS id,phase,elapsed_ms AS ms,valid,splits,setup_json FROM practice_laps WHERE driver_id=? AND round_key=? ORDER BY rowid').bind(driver.id,ROUND).all();
   const byPhase=Object.fromEntries(sessions.map(({id})=>[id,results.filter(l=>l.phase===id)]));
@@ -121,7 +169,7 @@ async function state(db,driver,sessions) {
     if(session.status==='closed'){
       if(session.id==='practice')report.board=(await standings(db,'practice')).filter(r=>r.used).map(toPublic);
       if(session.id==='qualifying')report.board=qualifyRows.map((r,i)=>({...toPublic(r),position:i+1,delay:i*GRID_STEP}));
-      if(session.id==='race'){
+      if(session.id==='race'&&replayReady){
         const positions=new Map(qualifyRows.map((r,i)=>[r.id,i]));
         report.board=(await standings(db,'race')).map(r=>{
           const i=positions.get(r.id), delay=i*GRID_STEP;
@@ -140,22 +188,30 @@ async function state(db,driver,sessions) {
 export async function practiceAPI(request,env,now=Date.now()) {
   if(!env.DB||!env.PRACTICE_INVITE)return problem('Inscrições temporariamente indisponíveis.',503);
   const url=new URL(request.url), db=env.DB;
-  const sessions=calendar(env,now), active=sessions.find(s=>s.status==='open');
+  const sessions=calendar(env,now), active=sessions.find(s=>s.status==='open'), race=sessions.at(-1);
+  const replayReady=now>=replayTime(race);
   const token=request.headers.get('cookie')?.match(new RegExp(`(?:^|;\\s*)${COOKIE}=([a-f0-9]{64})(?:;|$)`))?.[1];
   const driver=token?await row(db,'SELECT id,name,color,livery FROM practice_drivers WHERE id=? AND event_id=?',await hash(token),EVENT):null;
-  const current=()=>state(db,driver,sessions);
+  const current=()=>state(db,driver,sessions,now);
   if(request.method==='GET'&&url.pathname==='/api/practice')return json(await current());
+  if(request.method==='GET'&&url.pathname==='/api/practice/replay'){
+    if(!replayReady)return problem('O replay ainda não foi liberado.',404);
+    if(!driver)return problem('Use o navegador da sua inscrição para assistir à corrida.',401);
+    return raceReplay(db,race,url.searchParams.get('grid'));
+  }
   if(request.method==='GET'&&url.pathname==='/api/practice/telemetry'){
     if(!driver)return problem('Use o navegador da sua inscrição para ver o comparativo do GP.',401);
-    const report=await telemetry(db,driver,sessions,url.searchParams.get('round'));
+    const report=await telemetry(db,driver,sessions,url.searchParams.get('round'),replayReady);
     return report?json(report):problem('Rodada indisponível.',404);
   }
   if(request.method!=='POST')return problem('Rota inexistente.',404);
   const origin=request.headers.get('Origin');
   if(origin&&origin!==url.origin)return problem('Origem da solicitação inválida.',403);
   if(!request.headers.get('Content-Type')?.startsWith('application/json'))return problem('Formato inválido.',415);
+  const bodyLimit=url.pathname==='/api/practice/lap'?750000:1024;
+  if(Number(request.headers.get('Content-Length'))>bodyLimit)return problem('Dados acima do limite.',413);
   const raw=await request.text();
-  if(raw.length>1024)return problem('Dados acima do limite.',413);
+  if(raw.length>bodyLimit)return problem('Dados acima do limite.',413);
   let payload;
   try{payload=JSON.parse(raw);}catch{return problem('Dados inválidos.',400);}
   if(!payload||typeof payload!=='object')return problem('Dados inválidos.',400);
@@ -185,7 +241,7 @@ export async function practiceAPI(request,env,now=Date.now()) {
     return json(await state(db,{...driver,color:livery.accent,livery:stored},sessions));
   }
   if(url.pathname!=='/api/practice/lap')return problem('Rota inexistente.',404);
-  const {id,ms,valid,splits,nextId,phase}=payload;
+  const {id,ms,valid,splits,nextId,phase,replay}=payload;
   if(!lapId(id))return problem('Identificador de volta inválido.',400);
   if(!active||phase!==active.id)return problem('A janela dessa sessão encerrou. Consulte o cronograma do GP.',410);
   if(payload.start===true){
@@ -200,11 +256,12 @@ export async function practiceAPI(request,env,now=Date.now()) {
   if(!Number.isInteger(ms)||ms<35000||ms>1800000||typeof valid!=='boolean')return problem('Tempo de volta inválido.',400);
   if(nextId!=null&&(!lapId(nextId)||nextId===id))return problem('Próxima volta inválida.',400);
   if(splits!=null&&(!Array.isArray(splits)||splits.length!==3||!splits.every(Number.isSafeInteger)||splits[0]<=0||splits[1]<=splits[0]||splits[2]<=splits[1]||splits[2]!==ms))return problem('Parciais inválidas.',400);
+  if(replay!=null&&(phase!=='race'||!validReplay(replay,ms)))return problem('Gravação de volta inválida.',400);
   let attempt=await findAttempt(db,driver.id,phase,id);
   if(!attempt)return problem('Essa tentativa não foi iniciada. Recarregue a página para começar outra volta.',409);
   if(attempt.elapsed_ms===0){
-    await db.prepare('UPDATE practice_laps SET elapsed_ms=?,valid=?,splits=?,next_lap_id=? WHERE driver_id=? AND round_key=? AND phase=? AND lap_id=? AND elapsed_ms=0')
-      .bind(ms,Number(valid),splits?JSON.stringify(splits):null,nextId??null,driver.id,ROUND,phase,id).run();
+    await db.prepare('UPDATE practice_laps SET elapsed_ms=?,valid=?,splits=?,next_lap_id=?,replay_json=? WHERE driver_id=? AND round_key=? AND phase=? AND lap_id=? AND elapsed_ms=0')
+      .bind(ms,Number(valid),splits?JSON.stringify(splits):null,nextId??null,replay?JSON.stringify(replay):null,driver.id,ROUND,phase,id).run();
     attempt=await findAttempt(db,driver.id,phase,id);
   }
   const next=attempt.next_lap_id?await reserveAttempt(db,driver.id,active,attempt.next_lap_id,{
