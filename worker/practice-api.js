@@ -126,7 +126,7 @@ async function raceReplay(db,race,gridPosition) {
   if(gridPosition!==null){
     const entry=grid[Number(gridPosition)-1];
     if(!/^[1-9][0-9]*$/.test(gridPosition)||!entry)return problem('Piloto indisponível no replay.',404);
-    const {results:laps}=await db.prepare(`SELECT elapsed_ms AS ms,replay_json AS frames
+    const {results:laps}=await db.prepare(`SELECT elapsed_ms AS ms,replay_json AS frames,valid
       FROM practice_laps WHERE driver_id=? AND round_key=? AND phase='race' AND elapsed_ms>0 ORDER BY rowid`)
       .bind(entry.id,ROUND).all();
     return json({laps});

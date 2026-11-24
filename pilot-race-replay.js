@@ -1,34 +1,31 @@
 import {drawCar} from './car-renderer.js';
-import {W,H} from './track.js';
-
-export function interpolateReplay(frames,ms) {
-  let lower=0, upper=frames.length-1;
-  while(upper-lower>1){
-    const mid=(lower+upper)>>1;
-    if(frames[mid][0]<=ms)lower=mid;
-    else upper=mid;
-  }
-  const [start,x,y,angle,progress]=frames[lower];
-  const [end,nextX,nextY,nextAngle,nextProgress]=frames[upper];
-  const portion=Math.max(0,Math.min(1,(ms-start)/(end-start)));
-  const turn=(nextAngle-angle)/1000;
-  return {x:x+(nextX-x)*portion,y:y+(nextY-y)*portion,
-    angle:angle/1000+Math.atan2(Math.sin(turn),Math.cos(turn))*portion,
-    progress:(progress+(nextProgress-progress)*portion)/10000};
-}
-
-export function replayPosition(driver,time) {
-  if(time<driver.delay)return {status:'waiting',progress:0};
-  const elapsed=time-driver.delay;
-  if(elapsed>=driver.duration)return {status:driver.official==null?'dnf':'finished',progress:driver.completed};
-  const index=driver.laps.findIndex(lap=>lap.end>elapsed);
-  const lap=driver.laps[index];
-  if(!lap.frames)return {status:'missing',progress:index};
-  const pose=interpolateReplay(lap.frames,elapsed-lap.start);
-  return {status:'driving',progress:index+pose.progress,pose};
-}
+import {CIRCUIT,W,H} from './track.js';
+import {broadcastEvents,interpolateReplay,replayGap,replayPosition,timingReference} from './pilot-replay-timing.js';
 
 const positionPriority={finished:0,driving:1,missing:1,waiting:2,dnf:3};
+const formatGap=ms=>ms==null?'—':`+${(ms/1000).toFixed(2)} s`;
+
+function eventText(event,format) {
+  if(event.kind==='pass')return `${event.name} ultrapassou ${event.rival}`;
+  if(event.kind==='fastest')return `${event.name} fez a melhor volta da corrida · ${format(event.ms)}`;
+  if(event.place===1)return `${event.name} venceu a corrida`;
+  return `${event.name} cruzou a linha em P${event.place}`;
+}
+
+function broadcastShot(positions,passes,time) {
+  const imminent=passes.find(event=>event.time-3000<=time&&time<=event.time+3500);
+  if(imminent){
+    const pair=positions.filter(driver=>driver.pose&&(driver.grid===imminent.grid||driver.grid===imminent.rivalGrid));
+    if(pair.length===2)return pair;
+  }
+  const running=positions.filter(driver=>driver.pose);
+  let pair=[], closest=.017;
+  for(let i=1;i<running.length;i++){
+    const gap=running[i-1].progress-running[i].progress;
+    if(gap<closest){closest=gap;pair=running.slice(i-1,i+1);}
+  }
+  return pair.length?pair:running.slice(0,1);
+}
 
 export function openRaceReplay(ui,world,getState,format) {
   return openReplay(ui,world,getState,format);
@@ -52,12 +49,12 @@ async function loadReplay(getState,lap,isOpen) {
       let elapsed=0;
       try{
         const {laps}=await getState(`/replay?grid=${driver.grid}`);
-        const timeline=laps.map(({ms,frames})=>{
+        const timeline=laps.map(({ms,frames,valid})=>{
           const start=elapsed;
           elapsed+=ms;
-          return {start,end:elapsed,frames:frames?JSON.parse(frames):null};
+          return {start,end:elapsed,valid:!!valid,frames:frames?JSON.parse(frames):null};
         });
-        return {...driver,laps:timeline,duration:elapsed};
+        return {...driver,laps:timeline,duration:elapsed,crossings:timingReference(timeline)};
       }catch{
         unavailable=true;
         return null;
@@ -77,14 +74,19 @@ async function openReplay(ui,world,getState,format,lap) {
     <button type="button" data-close>Fechar</button></header>
     <p role="status">Carregando ${lap?'a volta':'a corrida'}…</p>
     <div class="pilot-replay-content" hidden>
-      <canvas aria-label="Replay no circuito de Interlagos"></canvas>
-      <section aria-label="${lap?'Tempo da volta':'Posições na corrida'}"><h3>${lap?'Piloto':'Posições'}</h3><ol></ol></section>
+      <div class="pilot-replay-track">
+        <canvas aria-label="Replay no circuito de Interlagos"></canvas>
+        ${lap?'':`<div class="pilot-broadcast-overlay"><div class="pilot-broadcast-camera" data-shot></div>
+          <div class="pilot-broadcast-headline" data-headline role="status" hidden></div></div>`}
+      </div>
+      <section aria-label="${lap?'Tempo da volta':'Posições na corrida'}"><h3>${lap?'Piloto':'Posições'}</h3><ol data-positions></ol>
+      ${lap?'':'<div class="pilot-broadcast-events" hidden><h3>Momentos da corrida</h3><ul data-events></ul></div>'}</section>
     </div>
     <div class="pilot-replay-controls" hidden>
       <button type="button" data-play>Reproduzir</button>
       <label class="pilot-replay-timeline"><span>Tempo da ${lap?'volta':'corrida'}</span><input type="range" min="0" value="0" step="1"><output></output></label>
       <label>Velocidade <select data-speed><option value="1">1×</option><option value="2">2×</option><option value="4">4×</option></select></label>
-      <label>Câmera <select data-camera><option value="leader">${lap?'Seguir piloto':'Líder'}</option><option value="map">Circuito inteiro</option></select></label>
+      <label>Câmera <select data-camera>${lap?'':'<option value="broadcast">Direção automática</option>'}<option value="leader">${lap?'Seguir piloto':'Líder'}</option><option value="map">Circuito inteiro</option></select></label>
     </div>`;
   ui.append(dialog);
   const $=selector=>dialog.querySelector(selector);
@@ -93,7 +95,7 @@ async function openReplay(ui,world,getState,format,lap) {
   $('[data-close]').onclick=()=>dialog.close();
   dialog.showModal();
 
-  const status=$('[role=status]');
+  const status=dialog.querySelector(':scope > [role=status]');
   try{
     const {drivers,limit,unavailable}=await loadReplay(getState,lap,()=>dialog.open);
     if(!dialog.open)return;
@@ -106,9 +108,12 @@ async function openReplay(ui,world,getState,format,lap) {
     status.textContent='Algumas voltas estão sem gravação. Os tempos oficiais continuam no resultado do GP.';
     $('.pilot-replay-content').hidden=false;
     $('.pilot-replay-controls').hidden=false;
-    const canvas=$('canvas'), ctx=canvas.getContext('2d'), list=$('ol');
+    const canvas=$('canvas'), ctx=canvas.getContext('2d'), list=$('[data-positions]');
     const seek=$('input'), clock=$('output'), play=$('[data-play]'), speed=$('[data-speed]'), view=$('[data-camera]');
     const duration=Math.max(...drivers.map(driver=>driver.delay+driver.duration));
+    const events=lap?[]:broadcastEvents(drivers,duration);
+    const passes=events.filter(event=>event.kind==='pass');
+    const shotLabel=$('[data-shot]'), headline=$('[data-headline]'), feed=$('[data-events]');
     seek.max=duration;
     for(const driver of lap?[]:drivers){
       const option=new Option(driver.name,String(driver.grid));
@@ -116,14 +121,14 @@ async function openReplay(ui,world,getState,format,lap) {
     }
     let time=0, previous=0, playing=!!lap, refreshAt=0;
     if(playing)play.textContent='Pausar';
-    let camera;
+    let camera, shotKey, lastEvent;
     play.onclick=()=>{
       if(time>=duration)time=0;
       playing=!playing;
       play.textContent=playing?'Pausar':'Reproduzir';
     };
     seek.oninput=()=>{time=Number(seek.value);camera=null;refreshAt=0;};
-    view.onchange=()=>{camera=null;};
+    view.onchange=()=>{camera=null;refreshAt=0;};
     function draw(now) {
       if(playing)time=Math.min(duration,time+Math.min(100,now-(previous||now))*Number(speed.value));
       previous=now;
@@ -138,8 +143,12 @@ async function openReplay(ui,world,getState,format,lap) {
         positionPriority[a.status]-positionPriority[b.status]
         || (a.status==='finished'&&b.status==='finished'?a.official-b.official:b.progress-a.progress)
         || a.grid-b.grid);
+      const focus=view.value==='broadcast'?broadcastShot(positions,passes,time)
+        : view.value==='leader'?positions.filter(driver=>driver.pose).slice(0,1)
+          : positions.filter(driver=>driver.pose&&String(driver.grid)===view.value);
       if(now>=refreshAt){
-        list.replaceChildren(...positions.map(driver=>{
+        const leader=positions[0];
+        list.replaceChildren(...positions.map((driver,index)=>{
           const item=document.createElement('li');
           const name=document.createElement('b'), label=document.createElement('small');
           name.textContent=driver.name;
@@ -148,8 +157,40 @@ async function openReplay(ui,world,getState,format,lap) {
             driving:`Volta ${Math.floor(driver.progress)+1}/${limit}`,finished:format(driver.official),
             missing:'Volta sem gravação',dnf:`Abandono · ${driver.completed}/${limit}`}[driver.status];
           item.append(name,label);
+          if(!lap&&index>0&&['driving','finished'].includes(driver.status)){
+            const gap=document.createElement('small');
+            gap.className='pilot-broadcast-gaps';
+            const toLeader=formatGap(replayGap(driver,leader,time));
+            gap.textContent=index===1?`Líder ${toLeader}`
+              : `Líder ${toLeader} · À frente ${formatGap(replayGap(driver,positions[index-1],time))}`;
+            item.append(gap);
+          }
           return item;
         }));
+        if(!lap){
+          if(focus.length===2){
+            const [ahead,behind]=focus;
+            const gap=replayGap(behind,ahead,time);
+            const metres=Math.round((ahead.progress-behind.progress)*CIRCUIT.metres);
+            shotLabel.textContent=`Disputa · ${ahead.name} × ${behind.name} · ~${metres} m${gap==null?'':` · ${formatGap(gap)}`}`;
+          }else shotLabel.textContent=focus.length?`Câmera · ${focus[0].name}`:'Circuito de Interlagos';
+          const eventIndex=events.findLastIndex(event=>event.time<=time);
+          const event=events[eventIndex];
+          const active=event&&time-event.time<4500;
+          headline.hidden=!active;
+          if(event!==lastEvent){
+            lastEvent=event;
+            headline.textContent=event?eventText(event,format):'';
+            headline.dataset.kind=event?.kind??'';
+            feed.parentElement.hidden=!event;
+            feed.replaceChildren(...events.slice(Math.max(0,eventIndex-3),eventIndex+1).reverse().map(event=>{
+              const item=document.createElement('li'), stamp=document.createElement('time');
+              stamp.textContent=format(event.time);
+              item.append(stamp,document.createTextNode(eventText(event,format)));
+              return item;
+            }));
+          }
+        }
         refreshAt=now+250;
       }
       const width=canvas.clientWidth,height=canvas.clientHeight;
@@ -162,12 +203,16 @@ async function openReplay(ui,world,getState,format,lap) {
       ctx.setTransform(density,0,0,density,0,0);
       ctx.fillStyle='#24392b';
       ctx.fillRect(0,0,width,height);
-      const target=view.value==='leader'?positions.find(driver=>driver.pose)?.pose
-        : positions.find(driver=>String(driver.grid)===view.value)?.pose;
+      const first=focus[0]?.pose,second=focus[1]?.pose;
+      const target=second?{x:(first.x+second.x)/2,y:(first.y+second.y)/2}:first;
       const fit=Math.min(width/W,height/H)*.97;
-      const zoom=target?Math.max(fit,Math.min(width,height)/850):fit;
+      const closeZoom=Math.min(width,height)/850;
+      const battleZoom=second?Math.min(width*.7/(Math.abs(first.x-second.x)+120),height*.65/(Math.abs(first.y-second.y)+120)):Infinity;
+      const zoom=target?Math.max(fit,Math.min(closeZoom,battleZoom)):fit;
       if(target){
-        if(!camera)camera={x:target.x,y:target.y};
+        const key=focus.map(driver=>driver.grid).sort().join('/');
+        if(!camera||key!==shotKey)camera={x:target.x,y:target.y};
+        shotKey=key;
         camera.x+=(target.x-camera.x)*.16;
         camera.y+=(target.y-camera.y)*.16;
       }else camera=null;
@@ -176,11 +221,28 @@ async function openReplay(ui,world,getState,format,lap) {
       ctx.scale(zoom,zoom);
       ctx.translate(-(camera?.x??W/2),-(camera?.y??H/2));
       ctx.drawImage(world,0,0,W,H);
-      for(const {livery,pose} of positions){
+      if(second){
+        ctx.save();
+        ctx.setLineDash([5/zoom,5/zoom]);
+        ctx.strokeStyle='#d5f561a0';
+        ctx.lineWidth=1.5/zoom;
+        ctx.beginPath();ctx.moveTo(first.x,first.y);ctx.lineTo(second.x,second.y);ctx.stroke();
+        ctx.restore();
+      }
+      for(const {livery,pose,name} of positions){
         if(!pose)continue;
         drawCar(ctx,{...pose,compound:'medium',number:livery.number,
           team:{color:livery.primary,secondary:livery.secondary,accent:livery.accent,pattern:livery.pattern}},
         {scale:Math.max(1,.18/zoom)});
+        if(!lap&&(focus.length===0||focus.some(driver=>driver.pose===pose))){
+          ctx.font=`bold ${11/zoom}px sans-serif`;
+          ctx.textAlign='center';
+          ctx.lineWidth=3/zoom;
+          ctx.strokeStyle='#0b1510';
+          ctx.fillStyle=livery.accent;
+          ctx.strokeText(name,pose.x,pose.y-17/zoom);
+          ctx.fillText(name,pose.x,pose.y-17/zoom);
+        }
       }
       ctx.restore();
       animation=requestAnimationFrame(draw);

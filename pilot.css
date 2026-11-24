@@ -15,12 +15,23 @@
 .pilot-replay h3 { margin: 0 0 .6rem; font-size: 1rem; }
 .pilot-replay button, .pilot-replay select { padding: .45rem .6rem; border: 1px solid #bbcdb970; border-radius: 0; background: #1e3026; color: inherit; font: inherit; }
 .pilot-replay-content { display: grid; grid-template-columns: minmax(0,1fr) minmax(11rem,15rem); gap: .65rem; }
+.pilot-replay-track { position: relative; min-width: 0; }
 .pilot-replay canvas { display: block; width: 100%; height: min(60dvh,36rem); border: 1px solid #bbcdb940; }
+.pilot-broadcast-overlay { position: absolute; inset: 0; pointer-events: none; display: flex; flex-direction: column; align-items: start; justify-content: space-between; gap: .4rem; padding: .55rem; }
+.pilot-broadcast-camera, .pilot-broadcast-headline { background: #10201aee; color: #f4f6ee; padding: .45rem .7rem; overflow-wrap: anywhere; }
+.pilot-broadcast-camera { border-left: 3px solid var(--lime); font-size: .85rem; }
+.pilot-broadcast-headline { font-weight: 800; border-left: 3px solid #97e6f3; }
+.pilot-broadcast-headline[data-kind=fastest] { border-color: #daaeff; color: #efd8ff; }
+.pilot-broadcast-headline[data-kind=finish] { border-color: var(--lime); color: var(--lime); }
 .pilot-replay section { max-height: min(60dvh,36rem); overflow: auto; padding: .65rem; background: #172923; }
 .pilot-replay ol { margin: 0; padding-left: 1.35rem; }
 .pilot-replay li { padding: .35rem 0; border-bottom: 1px solid #bbcdb940; }
 .pilot-replay li b { display: block; padding-left: .35rem; border-left: 3px solid; overflow-wrap: anywhere; }
 .pilot-replay li small { display: block; margin-left: .55rem; color: #bdd0bf; }
+.pilot-replay li .pilot-broadcast-gaps { margin-top: .25rem; color: #d5f561; font-size: .78rem; font-variant-numeric: tabular-nums; }
+.pilot-broadcast-events { margin-top: .85rem; }
+.pilot-broadcast-events ul { list-style: none; padding: 0; margin: 0; font-size: .8rem; }
+.pilot-broadcast-events time { display: block; margin-bottom: .14rem; font-size: .72rem; color: #bdd0bf; font-variant-numeric: tabular-nums; }
 .pilot-replay-controls { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; margin-top: .65rem; }
 .pilot-replay-timeline { flex: 1 1 15rem; display: grid; grid-template-columns: 1fr auto; align-items: center; gap: .2rem .5rem; }
 .pilot-replay-timeline input { grid-column: 1/-1; width: 100%; accent-color: var(--lime); margin: 0; }

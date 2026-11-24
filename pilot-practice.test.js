@@ -8,7 +8,7 @@ import {proposePilotSetup} from './pilot-engineer.js';
 import {at,ROAD} from './track.js';
 import {engineRevs} from './racing-audio.js';
 import {fastestLaps,lapHistoryTable,pilotLapRows} from './lap-history.js';
-import {interpolateReplay,replayPosition} from './pilot-race-replay.js';
+import {broadcastEvents,interpolateReplay,replayGap,replayPosition,timingReference} from './pilot-replay-timing.js';
 
 test('invitation, unlimited practice, session limits, retries and deadline',async()=>{
   const sqlite=new DatabaseSync(':memory:');
@@ -191,6 +191,7 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   ]);
   const playback=await (await send('/replay?grid=1',null,cookie,replayAt)).json();
   assert.equal(playback.laps.length,10);
+  assert.equal(playback.laps[0].valid,1);
   assert.deepEqual(JSON.parse(playback.laps[0].frames),replay);
   assert.equal((await send('/replay?grid=99',null,cookie,replayAt)).status,404);
 });
@@ -207,6 +208,29 @@ test('race replay interpolates poses and applies grid delay once',()=>{
   assert.equal(replayPosition(driver,2150).progress,1.5);
   assert.equal(replayPosition(driver,2199).status,'driving');
   assert.equal(replayPosition(driver,2200).status,'finished');
+});
+
+test('broadcast detects a sustained pass, timing gaps and valid lap records',()=>{
+  function runner(grid,name,delay,times){
+    let duration=0;
+    const laps=times.map(([ms,valid])=>{
+      const start=duration;
+      duration+=ms;
+      return {start,end:duration,valid,frames:[[0,0,0,0,0],[ms,100,0,0,10000]]};
+    });
+    return {grid,name,delay,laps,completed:laps.length,duration,official:delay+duration,crossings:timingReference(laps)};
+  }
+  const first=runner(1,'Verde',0,[[60000,true],[50000,true]]);
+  const second=runner(2,'Laranja',2000,[[54000,false],[58000,true]]);
+  const at=(time,driver)=>({...driver,...replayPosition(driver,time)});
+  assert.ok(Math.abs(replayGap(at(10000,second),at(10000,first),10000)-1111.111)<.01);
+  assert.equal(replayGap(at(114000,second),at(114000,first),114000),4000);
+  const events=broadcastEvents([first,second],114000);
+  const pass=events.find(event=>event.kind==='pass');
+  assert.ok(Math.abs(pass.time-20000)<250);
+  assert.deepEqual([pass.grid,pass.rivalGrid],[2,1]);
+  assert.deepEqual(events.filter(event=>event.kind==='fastest').map(event=>event.ms),[60000,50000]);
+  assert.deepEqual(events.filter(event=>event.kind==='finish').map(event=>event.time),[110000,114000]);
 });
 
 test('gravel costs speed without invalidating the lap, even after an automatic recovery',()=>{
