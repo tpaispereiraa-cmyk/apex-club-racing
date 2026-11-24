@@ -304,7 +304,7 @@ export function bootPilot({canvas,ctx,world}) {
         }else clearRun();
       }
       message('');
-      const sessionEnded=state.limit!=null&&state.used>=state.limit&&!attemptId;
+      const sessionEnded=state.limit!=null&&state.used>=state.limit&&!state.attemptId;
       if(!state.open||(!attemptId&&car)||sessionEnded) {
         leave();
         message(sessionEnded?'Sessão concluída. Seus tempos estão no histórico.':'A tentativa foi encerrada.');
