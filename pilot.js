@@ -10,12 +10,12 @@ import {makePilotCar, stepPilot, recoverPilot, setupFor, PILOT_STEP, PILOT_SETUP
 
 const format = ms => ms == null ? '—' : `${Math.floor(ms/60000)}:${((ms%60000)/1000).toFixed(3).padStart(6,'0')}`;
 const closeDate = new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'America/Sao_Paulo'});
-const deadline = date => closeDate.format(new Date(Date.parse(date)-60000));
+const deadline = date => closeDate.format(new Date(date));
 const patterns = {clean:'Clássica',stripe:'Listras',chevron:'Setas',checkers:'Xadrez',split:'Diagonal',bolt:'Raio'};
 const phases = {
-  practice:{title:'Treino <em>livre.</em>',instructions:'Voltas ilimitadas para testar acertos e buscar seu melhor tempo até o fim da sessão.'},
-  qualifying:{title:'Classifi<em>cação.</em>',instructions:'Uma saída com três voltas rápidas seguidas. A melhor define o seu lugar no grid.'},
-  race:{title:'Dia de <em>corrida.</em>',instructions:'12 voltas em sequência. Cada posição atrás da pole soma 2 s ao tempo em pista.'}
+  practice:{title:'Treino <em>livre.</em>',instructions:()=> 'Voltas ilimitadas para testar acertos e buscar seu melhor tempo até o fim da sessão.'},
+  qualifying:{title:'Classifi<em>cação.</em>',instructions:limit=>`Uma saída com ${limit} voltas rápidas seguidas. A melhor define seu lugar no grid.`},
+  race:{title:'Dia de <em>corrida.</em>',instructions:limit=>`${limit} voltas rápidas, com pista seca, sem desgaste de pneus e com combustível constante. Cada posição atrás da pole soma 2 s ao tempo em pista.`}
 };
 const draftKey = 'apex-practice-setup-v1';
 const pendingKey = 'apex-practice-pending-v1';
@@ -169,9 +169,12 @@ export function bootPilot({canvas,ctx,world}) {
     if (!state) return;
     const {driver,phase,used=0,best,open,limit,closesAt,canStart,grid,lockedSetup}=state;
     const race=phase==='race';
-    $('.pilot-intro h1').innerHTML=phases[phase]?.title ?? 'GP <em>encerrado.</em>';
-    $('#pilot-deadline').textContent=open ? `Sessão aberta até ${deadline(closesAt)} · horário de Brasília.` : 'As três sessões foram encerradas.';
-    $('#pilot-session-note').textContent=phases[phase]?.instructions ?? 'Selecione uma sessão para consultar os tempos e resultados.';
+    const upcoming=state.sessions.find(session=>session.status==='upcoming');
+    $('.pilot-intro h1').innerHTML=phases[phase]?.title ?? (upcoming?'Entre <em>sessões.</em>':'GP <em>encerrado.</em>');
+    $('#pilot-deadline').textContent=open
+      ? `Sessão aberta até ${deadline(closesAt)} · horário de Brasília.`
+      : upcoming ? `${upcoming.name} começa em ${deadline(upcoming.opensAt)} · horário de Brasília.` : 'As três sessões foram encerradas.';
+    $('#pilot-session-note').textContent=phases[phase??upcoming?.id]?.instructions((open?limit:upcoming?.limit)) ?? 'Selecione uma sessão para consultar os tempos e resultados.';
     if(!schedule.children.length){
       schedule.innerHTML=state.sessions.map(s=>`<button type="button" data-report="${s.id}"><b></b><time></time><small></small></button>`).join('');
     }
@@ -180,7 +183,9 @@ export function bootPilot({canvas,ctx,world}) {
       button.dataset.status=session.status;
       button.querySelector('b').textContent=session.name;
       time.dateTime=session.closesAt;
-      time.textContent=deadline(session.closesAt);
+      time.textContent=session.status==='upcoming'
+        ? `${deadline(session.opensAt)} – ${deadline(session.closesAt)}`
+        : deadline(session.closesAt);
       button.querySelector('small').textContent={open:'Em andamento',upcoming:'Aguardando',closed:'Encerrado'}[session.status];
     }
     $('#pilot-quota').textContent=$('#pilot-live-quota').textContent=limit==null?String(used):`${used} / ${limit}`;
@@ -205,7 +210,7 @@ export function bootPilot({canvas,ctx,world}) {
     $('.pilot-start-note').textContent=canStart
       ? race?'Sua corrida é individual. O resultado geral sai no fim da janela.':'Na volta rápida, você começa antes da última curva. A tentativa conta ao cruzar a linha.'
       : finished.length===limit
-        ? race?`Seu tempo oficial foi ${format(finished.reduce((total,lap)=>total+lap.ms,grid?.delay??0))}.`:'Você completou suas três voltas.'
+        ? race?`Seu tempo oficial foi ${format(finished.reduce((total,lap)=>total+lap.ms,grid?.delay??0))}.`:`Você completou suas ${limit} voltas.`
         : 'Sua saída já foi iniciada. A sessão permite uma saída por piloto.';
     $('.pilot-start-options').dataset.phase=phase ?? '';
     for(const button of ui.querySelectorAll('[data-pilot-start]')){
@@ -428,5 +433,9 @@ export function bootPilot({canvas,ctx,world}) {
   }
   resize();addEventListener('resize',resize);
   syncSetup();drawPreview();refresh();requestAnimationFrame(frame);
-  setInterval(()=>{if(!car && !busy && !saving && state?.open && Date.now()>=Date.parse(state.closesAt))refresh();},1000);
+  setInterval(()=>{
+    if(car||busy||saving||!state)return;
+    const transition=state.open ? state.closesAt : state.sessions.find(session=>session.status==='upcoming')?.opensAt;
+    if(Date.now()>=Date.parse(transition))refresh();
+  },1000);
 }

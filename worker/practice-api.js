@@ -1,10 +1,13 @@
 const EVENT = 'interlagos-2026-11-21';
 const ROUND = '2026-11-22-weekend';
-const PRACTICE_CLOSE = '2026-11-23T03:00:00.000Z';
 const DAY = 86_400_000;
 const GRID_STEP = 2000;
 const COOKIE = 'apex_practice';
-const PHASES = [['practice','Treino livre',null],['qualifying','Classificação',3],['race','Corrida',12]];
+const PHASES = [
+  ['practice','Treino livre',null,null,'2026-11-24T15:00:00.000Z'],
+  ['qualifying','Classificação',6,'2026-11-24T15:00:00.000Z','2026-11-24T20:00:00.000Z'],
+  ['race','Corrida',10,'2026-11-24T20:30:00.000Z','2026-11-25T02:59:59.999Z']
+];
 const PATTERNS = ['clean','stripe','chevron','checkers','split','bolt'];
 const SETUP_BOUNDS = {frontWing:[0,10],rearWing:[0,10],antiRoll:[0,10],brakeBias:[50,65],rideHeight:[25,65]};
 const json = (data, status = 200, headers = {}) => Response.json(data,{status,headers:{'Cache-Control':'no-store',...headers}});
@@ -16,11 +19,14 @@ const lapId = id => typeof id==='string'&&/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]
 const isColor = value => typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value);
 
 function calendar(env,now) {
-  const end=Date.parse(env.PRACTICE_CLOSES_AT||PRACTICE_CLOSE);
-  return PHASES.map(([id,name,limit],i)=>{
-    const open=i?end+(i-1)*DAY:null, close=end+i*DAY;
-    return {id,name,limit,opensAt:open===null?null:new Date(open).toISOString(),closesAt:new Date(close).toISOString(),
-      status:now>=close?'closed':open!==null&&now<open?'upcoming':'open'};
+  const practiceClose=Date.parse(env.PRACTICE_CLOSES_AT);
+  return PHASES.map(([id,name,limit,opensAt,closesAt],i)=>{
+    if(Number.isFinite(practiceClose)){
+      opensAt=i ? new Date(practiceClose+(i-1)*DAY).toISOString() : null;
+      closesAt=new Date(practiceClose+i*DAY).toISOString();
+    }
+    return {id,name,limit,opensAt,closesAt,
+      status:now>=Date.parse(closesAt)?'closed':opensAt&&now<Date.parse(opensAt)?'upcoming':'open'};
   });
 }
 
@@ -97,7 +103,7 @@ async function standings(db,phase) {
 
 async function state(db,driver,sessions) {
   const active=sessions.find(s=>s.status==='open');
-  const basic={phase:active?.id??null,closesAt:(active??sessions.at(-1)).closesAt,open:!!active,sessions,limit:active?active.limit:12};
+  const basic={phase:active?.id??null,closesAt:(active??sessions.at(-1)).closesAt,open:!!active,sessions,limit:(active??sessions.at(-1)).limit};
   if(!driver)return {...basic,driver:null};
   const {results}=await db.prepare('SELECT phase,elapsed_ms AS ms,valid,splits,setup_json FROM practice_laps WHERE driver_id=? AND round_key=? ORDER BY rowid').bind(driver.id,ROUND).all();
   const byPhase=Object.fromEntries(sessions.map(({id})=>[id,results.filter(l=>l.phase===id)]));

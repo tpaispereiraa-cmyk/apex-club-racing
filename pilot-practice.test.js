@@ -88,9 +88,10 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   assert.equal(archiveReport.sessions[0].entries[0].best.setup,null);
   assert.equal((await send('/telemetry?round=unavailable',null,cookie)).status,404);
   delete env.PRACTICE_CLOSES_AT;
-  const qualStart=Date.parse('2026-11-23T03:00:00Z');
-  const raceStart=Date.parse('2026-11-24T03:00:00Z');
-  const raceEnd=Date.parse('2026-11-25T03:00:00Z');
+  const qualStart=Date.parse('2026-11-24T15:00:00Z');
+  const qualEnd=Date.parse('2026-11-24T20:00:00Z');
+  const raceStart=Date.parse('2026-11-24T20:30:00Z');
+  const raceEnd=Date.parse('2026-11-25T02:59:59.999Z');
   assert.equal((await (await send('',null,cookie,qualStart-1)).json()).phase,'practice');
   const afterPractice=await (await send('',null,cookie,qualStart)).json();
   assert.equal(afterPractice.phase,'qualifying');
@@ -121,29 +122,37 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   const qualified=await stint(cookie,'qualifying',qualStart,[
     {ms:68000,splits:[19000,44000,68000],valid:true},
     {ms:61000,splits:[21000,43000,61000],valid:true},
-    {ms:45000,splits:[15000,30000,45000],valid:false}
+    {ms:45000,splits:[15000,30000,45000],valid:false},
+    67000, 66000, 64000
   ]);
-  assert.equal(qualified.used,3);
+  assert.equal(qualified.used,6);
   assert.equal(qualified.best,61000);
-  await stint(secondCookie,'qualifying',qualStart,[65000,62000,65000]);
+  await stint(secondCookie,'qualifying',qualStart,[65000,62000,65000,66000,64000,63000]);
   const comparisons=(await (await send('/telemetry',null,secondCookie,qualStart)).json()).sessions[1].entries;
   const first=comparisons.find(e=>!e.me);
   assert.equal(first.best.ms,61000);
   assert.equal(first.best.setup.rearWing,9);
   assert.equal(first.sectors.reduce((sum,s)=>sum+s.ms,0),59000);
   assert.equal(comparisons.find(e=>e.me).best.ms,62000);
+  assert.equal((await (await send('',null,cookie,qualEnd-1)).json()).phase,'qualifying');
+  for(const now of [qualEnd,raceStart-1]){
+    const gap=await (await send('',null,cookie,now)).json();
+    assert.equal(gap.phase,null);
+    assert.deepEqual(gap.sessions.map(session=>session.status),['closed','closed','upcoming']);
+    assert.equal((await send('/lap',{phase:'race',start:true,id:crypto.randomUUID()},cookie,now)).status,410);
+  }
   const race=await (await send('',null,secondCookie,raceStart)).json();
   assert.equal(race.phase,'race');
   assert.deepEqual(race.grid,{position:2,delay:2000});
   assert.equal(race.lockedSetup.rearWing,9);
   assert.equal(race.sessions[1].board[0].best,61000);
   assert.equal((await send('/register',{name:'Novo piloto',invite:'test-only'},undefined,raceStart)).status,410);
-  await stint(cookie,'race',raceStart,Array(12).fill(60000));
-  await stint(secondCookie,'race',raceStart,Array(12).fill(59900));
+  await stint(cookie,'race',raceStart,Array(10).fill(60000));
+  await stint(secondCookie,'race',raceStart,Array(10).fill(59900));
   assert.equal((await (await send('',null,cookie,raceEnd-1)).json()).sessions[2].board,undefined);
   const final=await (await send('',null,cookie,raceEnd)).json();
   assert.equal(final.phase,null);
-  assert.deepEqual(final.sessions[2].board.map(r=>[r.name,r.official]),[['Piloto Teste',720000],['Mais um',720800]]);
+  assert.deepEqual(final.sessions[2].board.map(r=>[r.name,r.official]),[['Piloto Teste',600000],['Mais um',601000]]);
 });
 
 test('gravel costs speed without invalidating the lap, even after an automatic recovery',()=>{
