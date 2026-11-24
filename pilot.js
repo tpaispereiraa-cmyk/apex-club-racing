@@ -19,8 +19,11 @@ const phases = {
 };
 const draftKey = 'apex-practice-setup-v1';
 const pendingKey = 'apex-practice-pending-v1';
+const runKey = 'apex-pilot-run-v1';
 function readLocal(key) { try {return JSON.parse(localStorage.getItem(key));} catch {return null;} }
-function writeLocal(key, value) { try {localStorage.setItem(key,JSON.stringify(value));} catch {} }
+function writeLocal(key, value) {
+  try {localStorage.setItem(key,JSON.stringify(value));return true;} catch {return false;}
+}
 
 async function getState(path='', data) {
   const response = await fetch('/api/practice'+path,data ? {
@@ -58,7 +61,7 @@ export function bootPilot({canvas,ctx,world}) {
         <div id="pilot-acerto"><p>Escolha um acerto para a próxima saída.</p><div class="pilot-presets" role="group" aria-label="Acertos sugeridos">${Object.entries(PRESETS).map(([id,p])=>`<button data-preset="${id}" aria-pressed="false"><b>${p.name}</b><small>${p.description}</small></button>`).join('')}</div>
         <details><summary>Configuração avançada</summary><div class="pilot-sliders">${PILOT_SETUP.map(id=>{const s=SETUP[id];return `<label><span>${s.label} <output></output></span><input type="range" name="${id}" min="${s.min}" max="${s.max}" step="${s.step}"></label>`;}).join('')}</div></details>
         <button type="button" id="pilot-open-engineer" aria-haspopup="dialog" aria-controls="pilot-engineer-dialog" hidden>Falar com o engenheiro</button><p id="pilot-engineer-note" role="status" hidden></p></div>
-        <div class="pilot-start-options"><button class="pilot-button" data-pilot-start="pits">Sair dos boxes</button><button class="pilot-button" data-pilot-start="flying">Iniciar volta rápida</button><button class="pilot-button" data-pilot-start="grid" hidden>Ir para a largada</button></div>
+        <div class="pilot-start-options"><button class="pilot-button" data-pilot-start="pits">Sair dos boxes</button><button class="pilot-button" data-pilot-start="flying">Iniciar volta rápida</button><button class="pilot-button" data-pilot-start="grid" hidden>Ir para a largada</button><button class="pilot-button" id="pilot-resume" hidden>Continuar</button></div>
         <p class="pilot-start-note"></p>
         <p class="pilot-controls"><kbd>W</kbd> acelerar <kbd>A</kbd><kbd>D</kbd> virar <kbd>S</kbd> frear <kbd>E</kbd> DRS · Scroll para ajustar o zoom</p></div>
         <form id="pilot-livery" hidden><h2>Pintura do carro</h2><div class="pilot-paints">
@@ -105,6 +108,7 @@ export function bootPilot({canvas,ctx,world}) {
   if (draft.preset==='manual') preset='manual';
   let state=null, car=null, latest=null, pending=readLocal(pendingKey), saving=false, busy=false;
   let attemptId=null, drivingPhase, runSetup, selectedReport=null;
+  let savedRun=readLocal(runKey), lastCheckpoint=0, releaseRunLock;
   let liveryDraft=null, liveryDirty=false;
   addPilotTelemetry(ui,getState,format,()=>selectedReport??state?.phase);
   if(pending&&!pending.phase){pending=null;writeLocal(pendingKey,null);}
@@ -112,6 +116,38 @@ export function bootPilot({canvas,ctx,world}) {
   const elapsed = ()=>car?.start == null ? null : Math.round((car.elapsed-car.start)*1000);
   const message = value => {$('.pilot-message').textContent=value;};
   const radio = value => {$('#pilot-radio').textContent=value;};
+  const timed = phase => phase==='qualifying'||phase==='race';
+  const matchesRun = run => run && timed(state?.phase) && state.open
+    && run.round===state.round && run.phase===state.phase && run.driver===state.driver?.name;
+  const canResume = run => matchesRun(run) && (run.attemptId
+    ? run.attemptId===state.attemptId : state.canStart);
+
+  function checkpoint() {
+    if(!car||!timed(drivingPhase))return false;
+    savedRun={round:state.round,phase:drivingPhase,driver:state.driver.name,car,setup:runSetup,
+      attemptId,latest,camera,zoomFactor,operation:pending};
+    return writeLocal(runKey,savedRun);
+  }
+
+  function clearRun() {
+    savedRun=null;
+    writeLocal(runKey,null);
+  }
+
+  async function lockRun() {
+    if(!navigator.locks)return true;
+    return new Promise((resolve,reject)=>{
+      navigator.locks.request(runKey,{ifAvailable:true},lock=>{
+        if(!lock){resolve(false);return;}
+        return new Promise(release=>{releaseRunLock=release;resolve(true);});
+      }).catch(reject);
+    });
+  }
+
+  function unlockRun() {
+    releaseRunLock?.();
+    releaseRunLock=undefined;
+  }
   const engineerNote=$('#pilot-engineer-note');
   addPilotEngineer(ui,{
     getSetup:()=>setup,
@@ -169,6 +205,7 @@ export function bootPilot({canvas,ctx,world}) {
     if (!state) return;
     const {driver,phase,used=0,best,open,limit,closesAt,canStart,grid,lockedSetup}=state;
     const race=phase==='race';
+    const resumable=canResume(savedRun);
     const upcoming=state.sessions.find(session=>session.status==='upcoming');
     $('.pilot-intro h1').innerHTML=phases[phase]?.title ?? (upcoming?'Entre <em>sessões.</em>':'GP <em>encerrado.</em>');
     $('#pilot-deadline').textContent=open
@@ -200,7 +237,7 @@ export function bootPilot({canvas,ctx,world}) {
     }
     $('#pilot-setup').hidden=!driver || !open;
     $('#pilot-driver').textContent=driver?.name ?? '';
-    $('#pilot-acerto').hidden=!!(race&&lockedSetup)||!canStart;
+    $('#pilot-acerto').hidden=!!(race&&lockedSetup)||!canStart||resumable;
     $('#pilot-open-engineer').hidden=phase!=='practice';
     if(phase!=='practice')engineerNote.hidden=true;
     const gridNote=$('#pilot-grid');
@@ -213,8 +250,13 @@ export function bootPilot({canvas,ctx,world}) {
         ? race?`Seu tempo oficial foi ${format(finished.reduce((total,lap)=>total+lap.ms,grid?.delay??0))}.`:`Você completou suas ${limit} voltas.`
         : 'Sua saída já foi iniciada. A sessão permite uma saída por piloto.';
     $('.pilot-start-options').dataset.phase=phase ?? '';
+    const resume=$('#pilot-resume');
+    resume.hidden=!resumable;
+    resume.disabled=!!(pending||savedRun?.operation);
+    resume.textContent=race?'Continuar Race':'Continuar Qualy';
+    if(resumable)$('.pilot-start-note').textContent='Retome do ponto em que parou. O prazo da sessão continua valendo.';
     for(const button of ui.querySelectorAll('[data-pilot-start]')){
-      button.hidden=(button.dataset.pilotStart==='grid')!==race;
+      button.hidden=resumable||(button.dataset.pilotStart==='grid')!==race;
       button.disabled=!canStart||!!pending;
     }
     if(!driver&&race)message('As inscrições encerraram. Pilotos inscritos podem entrar pelo navegador usado na inscrição.');
@@ -226,12 +268,16 @@ export function bootPilot({canvas,ctx,world}) {
       item.textContent=`V${lap.lap} · ${format(lap.ms)}`;
       return item;
     }));
-    $('#pilot-retry').hidden=!pending;
+    $('#pilot-retry').hidden=!(pending||matchesRun(savedRun)&&savedRun.operation);
     showReport();
     drawPreview();
   }
   async function refresh() {
-    try {state=await getState();showState();}
+    try {
+      state=await getState();
+      if(!car&&matchesRun(savedRun)&&savedRun.operation)await retryLap();
+      showState();
+    }
     catch(error) {message(error.message);$('#pilot-retry').hidden=false;}
   }
   function leave() {
@@ -239,15 +285,24 @@ export function bootPilot({canvas,ctx,world}) {
     attemptId=null;
     keys.clear(); touches.clear();
     last=0; accumulator=0; showState();
+    if(!saving)unlockRun();
   }
   async function saveLap() {
     if (!pending || saving) return;
     saving=true;
     radio(pending.start?'Registrando início da volta…':'Gravando volta…');
     try {
+      const operation=pending;
       state=await getState('/lap',pending);
       if(car){car.bestSplits=state.bestSplits??null;attemptId=state.attemptId??null;}
       pending=null;writeLocal(pendingKey,null);
+      if(timed(operation.phase)&&matchesRun(savedRun)&&savedRun.operation?.id===operation.id){
+        if(state.attemptId){
+          savedRun={...savedRun,attemptId:state.attemptId,operation:null};
+          savedRun.car.bestSplits=state.bestSplits??null;
+          writeLocal(runKey,savedRun);
+        }else clearRun();
+      }
       message('');
       const sessionEnded=state.limit!=null&&state.used>=state.limit&&!attemptId;
       if(!state.open||(!attemptId&&car)||sessionEnded) {
@@ -256,15 +311,28 @@ export function bootPilot({canvas,ctx,world}) {
       }
       showState();
     } catch(error) {
-      if ([400,401,409,410].includes(error.status)) {pending=null;writeLocal(pendingKey,null);}
+      if ([400,401,409,410].includes(error.status)) {
+        if(savedRun?.operation?.id===pending?.id)clearRun();
+        pending=null;writeLocal(pendingKey,null);
+      }
       leave();message(error.message);
       if(!pending)await refresh();
-    } finally {saving=false;accumulator=0;}
+    } finally {saving=false;accumulator=0;if(!car)unlockRun();}
   }
   function submitLap(operation) {
     pending=operation;
-    writeLocal(pendingKey,pending);
+    if(!checkpoint())writeLocal(pendingKey,pending);
     saveLap();
+  }
+  async function retryLap() {
+    if(saving)return;
+    if(!car&&timed(state?.phase)){
+      if(!await lockRun())return;
+      savedRun=readLocal(runKey);
+      if(matchesRun(savedRun)&&savedRun.operation)pending=savedRun.operation;
+      else if(!pending||!readLocal(pendingKey)){pending=null;unlockRun();return;}
+    }
+    await saveLap();
   }
   const params=new URLSearchParams(location.hash.slice(1));
   form.elements.invite.value=params.get('convite') ?? '';
@@ -319,8 +387,20 @@ export function bootPilot({canvas,ctx,world}) {
     busy=true;
     message('');
     try {
+      if(!await lockRun()){message('Já há uma saída aberta em outra aba.');return;}
+      savedRun=readLocal(runKey);
       state=await getState();
       showState();
+      if(mode==='resume'){
+        if(!canResume(savedRun)||savedRun.operation)return;
+        ({car,attemptId,phase:drivingPhase,setup:runSetup,latest,camera,zoomFactor}=savedRun);
+        selectedReport=drivingPhase;
+        last=0;accumulator=0;
+        garage.hidden=true;track.hidden=false;
+        track.querySelector('[data-action=garage]').textContent='Pausar';
+        return;
+      }
+      if(canResume(savedRun)||matchesRun(savedRun)&&savedRun.operation)return;
       if(!state.driver||!state.canStart||(mode==='grid')!==(state.phase==='race'))return;
       if(liveryDirty){
         if(!paintForm.reportValidity())return;
@@ -333,16 +413,23 @@ export function bootPilot({canvas,ctx,world}) {
       car=makePilotCar(runSetup,state.driver.livery,state.bestSplits??null,mode);
       camera=null;accumulator=0;last=0;latest=null;
       garage.hidden=true;track.hidden=false;
-      track.querySelector('[data-action=garage]').textContent=drivingPhase==='practice'?'Voltar à garagem':'Sair da pista';
+      track.querySelector('[data-action=garage]').textContent=drivingPhase==='practice'?'Voltar à garagem':'Pausar';
+      checkpoint();
       radio(car.pit?'Segure W para sair dos boxes.':mode==='grid'?'Segure W para largar.':'Cruze a linha para iniciar a volta rápida.');
     } catch(error){message(error.message);}
-    finally {busy=false;}
+    finally {busy=false;if(!car)unlockRun();}
   }
   for(const button of ui.querySelectorAll('[data-pilot-start]'))button.onclick=()=>startDriving(button.dataset.pilotStart);
-  $('#pilot-retry').onclick=()=>pending?saveLap():refresh();
+  $('#pilot-resume').onclick=()=>startDriving('resume');
+  $('#pilot-retry').onclick=()=>pending||savedRun?.operation?retryLap():refresh();
   function exitTrack() {
+    if(timed(drivingPhase)){
+      if(!checkpoint()){radio('Não foi possível salvar a pausa neste navegador.');return;}
+      leave();
+      message('Sessão pausada. Você pode continuar até o horário de encerramento.');
+      return;
+    }
     if(saving)return;
-    if(drivingPhase!=='practice'&&attemptId&&!confirm('Sair da pista encerra sua participação nesta sessão. Deseja continuar?'))return;
     leave();
   }
   track.addEventListener('click',e=>{
@@ -358,6 +445,10 @@ export function bootPilot({canvas,ctx,world}) {
   });
   addEventListener('keyup',e=>keys.delete(e.key.toLowerCase()));
   addEventListener('blur',()=>{keys.clear();touches.clear();});
+  addEventListener('pagehide',()=>{if(car)checkpoint();});
+  document.addEventListener('visibilitychange',()=>{
+    if(document.hidden&&car&&timed(drivingPhase))exitTrack();
+  });
   addEventListener('wheel',e=>{
     if(!car||e.ctrlKey)return;
     e.preventDefault();
@@ -393,8 +484,8 @@ export function bootPilot({canvas,ctx,world}) {
     const dt=last?Math.min(.1,(now-last)/1000):0;
     last=now;
     if(car) {
-      if(Date.now()>=Date.parse(state.closesAt)&&!saving) {leave();refresh();return;}
-      if(!saving) {
+      if(Date.now()>=Date.parse(state.closesAt)&&!saving) {if(timed(drivingPhase))clearRun();leave();refresh();return;}
+      if(!saving&&!document.hidden) {
         accumulator+=dt;
         const pressed=new Set([...keys,...touches.values()]);
         const input=Object.fromEntries([...pressed].map(key=>[key,true]));
@@ -410,6 +501,7 @@ export function bootPilot({canvas,ctx,world}) {
         }
       }
       if(car) {
+        if(!saving&&now-lastCheckpoint>=500&&timed(drivingPhase)){checkpoint();lastCheckpoint=now;}
         $('#pilot-phase').textContent=car.pit?'PIT LANE':car.start!==null?(drivingPhase==='race'?'VOLTA DE CORRIDA':'VOLTA RÁPIDA'):car.startMode==='grid'?'LARGADA':car.startMode==='flying'?'APROXIMAÇÃO':'VOLTA DE SAÍDA';
         $('#pilot-live-time').textContent=format(elapsed());
         $('.pilot-speed strong').textContent=Math.round(car.v*3.6);

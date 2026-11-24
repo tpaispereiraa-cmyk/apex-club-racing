@@ -107,6 +107,9 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
     const first=await send('/lap',{phase,start:true,id,setup},sessionCookie,now);
     assert.equal(first.status,200);
     assert.equal((await first.json()).attemptId,id);
+    const resumed=await (await send('',null,sessionCookie,now)).json();
+    assert.equal(resumed.attemptId,id);
+    assert.equal(resumed.used,1);
     assert.equal((await send('/lap',{phase,start:true,id:crypto.randomUUID(),setup},sessionCookie,now)).status,409);
     for(const timing of times){
       const nextId=crypto.randomUUID();
@@ -115,6 +118,9 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
       assert.equal(reply.status,200);
       const snapshot=await reply.json();
       id=snapshot.attemptId;
+      const reopened=await (await send('',null,sessionCookie,now)).json();
+      assert.equal(reopened.attemptId,id);
+      assert.deepEqual(reopened.history,snapshot.history);
       if(!id)return snapshot;
     }
     assert.fail('Stint should be complete');

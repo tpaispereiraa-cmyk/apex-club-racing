@@ -103,9 +103,9 @@ async function standings(db,phase) {
 
 async function state(db,driver,sessions) {
   const active=sessions.find(s=>s.status==='open');
-  const basic={phase:active?.id??null,closesAt:(active??sessions.at(-1)).closesAt,open:!!active,sessions,limit:(active??sessions.at(-1)).limit};
+  const basic={round:ROUND,phase:active?.id??null,closesAt:(active??sessions.at(-1)).closesAt,open:!!active,sessions,limit:(active??sessions.at(-1)).limit};
   if(!driver)return {...basic,driver:null};
-  const {results}=await db.prepare('SELECT phase,elapsed_ms AS ms,valid,splits,setup_json FROM practice_laps WHERE driver_id=? AND round_key=? ORDER BY rowid').bind(driver.id,ROUND).all();
+  const {results}=await db.prepare('SELECT lap_id AS id,phase,elapsed_ms AS ms,valid,splits,setup_json FROM practice_laps WHERE driver_id=? AND round_key=? ORDER BY rowid').bind(driver.id,ROUND).all();
   const byPhase=Object.fromEntries(sessions.map(({id})=>[id,results.filter(l=>l.phase===id)]));
   const bestOf=laps=>laps.filter(l=>l.valid).sort((a,b)=>a.ms-b.ms||Number(!!b.splits)-Number(!!a.splits))[0];
   const activeLaps=byPhase[active?.id??'race'], best=bestOf(activeLaps);
@@ -133,6 +133,7 @@ async function state(db,driver,sessions) {
   }
   return {...basic,driver:{name:driver.name,color:driver.color,livery:liveryOf(driver)},sessions:reports,
     used:activeLaps.length,best:best?.ms??null,bestSplits:best?.splits?JSON.parse(best.splits):null,history:historyRows(activeLaps),
+    attemptId:active ? activeLaps.findLast(lap=>lap.ms===0)?.id??null : null,
     canStart:!!active&&(active.id==='practice'||activeLaps.length===0),grid,lockedSetup:locked?JSON.parse(locked.setup_json):null};
 }
 
