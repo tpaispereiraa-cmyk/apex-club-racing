@@ -311,7 +311,7 @@ test('broadcast detects a sustained pass, timing gaps and valid lap records',()=
   assert.deepEqual(events.filter(event=>event.kind==='finish').map(event=>event.time),[110000,114000]);
 });
 
-test('gravel costs speed without invalidating the lap, even after an automatic recovery',()=>{
+test('gravel slows the car without teleporting it or invalidating the lap',()=>{
   const car=makePilotCar(setupFor('balanced'),'#ffffff',null,'flying');
   Object.assign(car,at(car.s,ROAD*.72),{v:30});
   stepPilot(car,{});
@@ -322,9 +322,24 @@ test('gravel costs speed without invalidating the lap, even after an automatic r
   assert.equal(car.invalid,false);
   const progress=car.progress;
   Object.assign(car,at(car.s,ROAD*1.6));
+  const position={x:car.x,y:car.y};
   stepPilot(car,{});
   assert.equal(car.progress,progress);
   assert.equal(car.invalid,false);
+  assert.equal(car.off,true);
+  const distance=Math.hypot(car.x-position.x,car.y-position.y);
+  assert.ok(distance>0&&distance<20);
+  assert.ok(car.v>0);
+
+  Object.assign(car,at(car.s+200),{v:30});
+  stepPilot(car,{});
+  assert.equal(car.progress,progress);
+  assert.equal(car.invalid,false);
+  assert.ok(car.v>0);
+
+  Object.assign(car,at(car.s),{v:30});
+  stepPilot(car,{});
+  assert.ok(car.progress>progress);
   recoverPilot(car);
   assert.equal(car.invalid,true);
 });

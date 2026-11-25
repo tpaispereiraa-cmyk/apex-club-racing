@@ -77,9 +77,9 @@ function splitAt(car,time) {
   return {ms,delta:reference===null?null:ms-reference,valid:!car.invalid};
 }
 
-export function recoverPilot(car, invalidate=true) {
+export function recoverPilot(car) {
   Object.assign(car,at(car.safeS),{s:car.safeS,v:0,slip:0,steer:0,
-    invalid:car.invalid||invalidate,off:false,instability:0,spin:0,locked:false});
+    invalid:true,off:false,instability:0,spin:0,locked:false});
 }
 
 export function stepPilot(car, keys) {
@@ -147,11 +147,8 @@ export function stepPilot(car, keys) {
   const p = nearest(car.x,car.y);
   car.off = p.d>ROAD*.5;
   const delta = mod(p.s-car.s+length/2,length)-length/2;
-  if (p.d>ROAD*1.45 || Math.abs(delta)>Math.max(20,movement*2.15)) {
-    // Restore position without awarding progress or shortcutting the timing gates.
-    recoverPilot(car,false);
-    return null;
-  }
+  // Keep the car moving even when its position cannot advance the timing gates.
+  if (p.d>ROAD*1.45 || Math.abs(delta)>Math.max(20,movement*2.15)) return null;
   car.s=p.s;
   if (!car.off && delta>=0) car.safeS=car.s;
   return timeLap(car,delta);
