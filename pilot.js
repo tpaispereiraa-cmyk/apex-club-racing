@@ -207,7 +207,7 @@ export function bootPilot({canvas,ctx,world}) {
     history.querySelector('h2').textContent=`Minhas voltas · ${report.name}`;
     history.querySelector('div').innerHTML=lapHistoryTable(laps,format);
     results.hidden=!report.board;
-    results.querySelector('h2').textContent=report.id==='qualifying'?'Grid de largada':report.id==='race'?'Resultado da corrida':'Tempos do treino';
+    results.querySelector('h2').textContent=report.id==='qualifying'?'Grid de largada':report.id==='race'?'Resultado final da corrida':'Tempos do treino';
     results.querySelector('p').hidden=!!report.board?.length;
     results.querySelector('ol').replaceChildren(...(report.board??[]).map(entry=>{
       const item=document.createElement('li'), name=document.createElement('b'), time=document.createElement('span');
@@ -247,7 +247,8 @@ export function bootPilot({canvas,ctx,world}) {
       time.textContent=session.status==='upcoming'
         ? `${deadline(session.opensAt)} – ${deadline(session.closesAt)}`
         : deadline(session.closesAt);
-      button.querySelector('small').textContent={open:'Em andamento',upcoming:'Aguardando',closed:'Encerrado'}[session.status];
+      button.querySelector('small').textContent={open:'Em andamento',upcoming:'Aguardando',
+        closed:session.id==='race'?'Finalizada':'Encerrado'}[session.status];
     }
     $('#pilot-quota').textContent=$('#pilot-live-quota').textContent=limit==null?String(used):`${used} / ${limit}`;
     $('#pilot-best').textContent=format(best);

@@ -93,8 +93,7 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   const qualStart=Date.parse('2026-11-24T15:00:00Z');
   const qualEnd=Date.parse('2026-11-24T20:00:00Z');
   const raceStart=Date.parse('2026-11-25T12:00:00Z');
-  const raceEnd=Date.parse('2026-11-25T16:00:00Z');
-  const replayAt=Date.parse('2026-11-25T16:01:00Z');
+  const raceEnd=Date.parse('2026-11-25T13:25:17Z');
   assert.equal((await (await send('',null,cookie,qualStart-1)).json()).phase,'practice');
   const afterPractice=await (await send('',null,cookie,qualStart)).json();
   assert.equal(afterPractice.phase,'qualifying');
@@ -172,31 +171,32 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   await stint(cookie,'race',raceStart,Array(6).fill({ms:60000,valid:true,replay}));
   await stint(secondCookie,'race',raceStart,Array(6).fill(59900));
   assert.equal((await (await send('',null,cookie,raceEnd-1)).json()).sessions[2].board,undefined);
-  for(const now of [raceEnd-1,raceEnd,replayAt-1]){
+  for(const now of [raceStart,raceEnd-1]){
     const hidden=await (await send('',null,cookie,now)).json();
     assert.equal(hidden.sessions[2].board,undefined);
     assert.equal(hidden.replayReady,false);
-    assert.equal(Date.parse(hidden.replayAt),replayAt);
+    assert.equal(Date.parse(hidden.replayAt),raceEnd);
     assert.equal((await send('/replay',null,cookie,now)).status,404);
     assert.equal((await send('/replay?grid=1',null,cookie,now)).status,404);
     const telemetry=await (await send('/telemetry',null,cookie,now)).json();
     assert.deepEqual(telemetry.sessions[2].entries,[]);
   }
-  const final=await (await send('',null,cookie,replayAt)).json();
+  const final=await (await send('',null,cookie,raceEnd)).json();
   assert.equal(final.phase,null);
   assert.equal(final.replayReady,true);
   assert.equal(final.replayAvailable,true);
   assert.deepEqual(final.sessions[2].board.map(r=>[r.name,r.official]),[['Piloto Teste',360000],['Mais um',361400]]);
-  assert.equal((await send('/replay',null,undefined,replayAt)).status,401);
-  const manifest=await (await send('/replay',null,cookie,replayAt)).json();
+  assert.equal((await send('/lap',{phase:'race',start:true,id:crypto.randomUUID()},cookie,raceEnd)).status,410);
+  assert.equal((await send('/replay',null,undefined,raceEnd)).status,401);
+  const manifest=await (await send('/replay',null,cookie,raceEnd)).json();
   assert.deepEqual(manifest.drivers.map(d=>[d.name,d.delay,d.official,d.recorded]),[
     ['Piloto Teste',0,360000,6],['Mais um',2000,361400,0]
   ]);
-  const playback=await (await send('/replay?grid=1',null,cookie,replayAt)).json();
+  const playback=await (await send('/replay?grid=1',null,cookie,raceEnd)).json();
   assert.equal(playback.laps.length,6);
   assert.equal(playback.laps[0].valid,1);
   assert.deepEqual(JSON.parse(playback.laps[0].frames),replay);
-  assert.equal((await send('/replay?grid=99',null,cookie,replayAt)).status,404);
+  assert.equal((await send('/replay?grid=99',null,cookie,raceEnd)).status,404);
 });
 
 test('grid starts in qualifying slots, holds on red and moves automatically on green',()=>{

@@ -6,7 +6,7 @@ const COOKIE = 'apex_practice';
 const PHASES = [
   ['practice','Treino livre',null,null,'2026-11-24T15:00:00.000Z'],
   ['qualifying','Classificação',6,'2026-11-24T15:00:00.000Z','2026-11-24T20:00:00.000Z'],
-  ['race','Corrida',6,'2026-11-25T12:00:00.000Z','2026-11-25T16:00:00.000Z']
+  ['race','Corrida',6,'2026-11-25T12:00:00.000Z','2026-11-25T13:25:17.000Z']
 ];
 const PATTERNS = ['clean','stripe','chevron','checkers','split','bolt'];
 const SETUP_BOUNDS = {frontWing:[0,10],rearWing:[0,10],antiRoll:[0,10],brakeBias:[50,65],rideHeight:[25,65]};
@@ -18,7 +18,7 @@ const row = (db,sql,...args) => db.prepare(sql).bind(...args).first();
 const lapId = id => typeof id==='string'&&/^[\da-f]{8}-(?:[\da-f]{4}-){3}[\da-f]{12}$/i.test(id);
 const isColor = value => typeof value==='string'&&/^#[0-9a-f]{6}$/i.test(value);
 
-const replayTime = race => Math.ceil(Date.parse(race.closesAt)/60000)*60000+60000;
+const replayTime = race => Date.parse(race.closesAt);
 
 function calendar(env,now) {
   const practiceClose=Date.parse(env.PRACTICE_CLOSES_AT);
