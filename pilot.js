@@ -137,7 +137,8 @@ export function bootPilot({canvas,ctx,world}) {
   const matchesRun = run => run && timed(state?.phase) && state.open
     && run.round===state.round && run.phase===state.phase && run.driver===state.driver?.name
     && (run.phase!=='race'||run.opensAt===raceOpensAt());
-  const canResume = run => matchesRun(run) && (run.attemptId
+  const canResume = run => matchesRun(run) && run.car && [run.car.x,run.car.y,run.car.s,run.car.angle,run.car.v,
+    run.car.model?.cdA,run.car.model?.mechanicalGrip].every(Number.isFinite) && (run.attemptId
     ? run.attemptId===state.attemptId : state.canStart);
   const warmupLaps = () => warmup?.round===state.round && warmup?.driver===state.driver?.name ? warmup.used : 0;
   const canWarmup = () => !!state.driver && state.phase==='qualifying' && state.canStart

@@ -200,7 +200,11 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
 });
 
 test('grid starts in qualifying slots, holds on red and moves automatically on green',()=>{
-  const cars=Array.from({length:6},(_,i)=>makePilotCar(setupFor('balanced'),'#ffffff',null,'grid',i+1));
+  // The API stores only the five adjustable Pilotar settings.
+  const lockedSetup={frontWing:6,rearWing:9,antiRoll:3,brakeBias:57,rideHeight:45};
+  const cars=Array.from({length:6},(_,i)=>makePilotCar(i===1?lockedSetup:setupFor('balanced'),'#ffffff',null,'grid',i+1));
+  const stable=makePilotCar(setupFor('stable'),'#ffffff');
+  assert.deepEqual(cars[1].model,stable.model);
   assert.equal(cars[0].s,cars[1].s);
   assert.ok(cars[2].s<cars[0].s);
   assert.notEqual(cars[0].y,cars[1].y);

@@ -23,7 +23,7 @@ export const GRID_ASSIST_TICKS = 72;
 const base = createCareer('aurora','APEX Practice');
 
 export function makePilotCar(setup,color,bestSplits=null,startMode='pits',gridPosition=1) {
-  base.teams.aurora.cars[0].setup = {...setup};
+  base.teams.aurora.cars[0].setup = {...defaultSetup(),...setup};
   const paint=typeof color==='string'?{primary:'#223037',secondary:'#10191c',accent:color,number:1}:color;
   const flying=startMode==='flying';
   const grid=startMode==='grid', onTrack=flying||grid;
