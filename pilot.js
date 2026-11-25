@@ -26,11 +26,14 @@ function readLocal(key) { try {return JSON.parse(localStorage.getItem(key));} ca
 function writeLocal(key, value) {
   try {localStorage.setItem(key,JSON.stringify(value));return true;} catch {return false;}
 }
+const asQueue=value=>Array.isArray(value)?value:value?.phase?[value]:[];
+const runQueue=run=>asQueue(run?.operations??run?.operation);
 
 async function getState(path='', data) {
   const body=data ? JSON.stringify(data) : null;
   const response = await fetch('/api/practice'+path,body ? {
-    method:'POST',headers:{'Content-Type':'application/json'},body,keepalive:body.length<48000
+    method:'POST',headers:{'Content-Type':'application/json'},body,keepalive:body.length<48000,
+    signal:path==='/lap'?AbortSignal.timeout?.(10000):undefined
   } : {cache:'no-store'});
   const result = await response.json().catch(()=>null);
   if (!response.ok || !result) {
@@ -82,7 +85,7 @@ export function bootPilot({canvas,ctx,world}) {
       </section>
     </div>
     <section class="pilot-track" hidden>
-      <div class="pilot-track-top"><div><span id="pilot-phase">PISTA</span><strong id="pilot-live-time">—</strong></div><div><span>VOLTAS USADAS</span><strong id="pilot-live-quota">—</strong></div></div>
+      <div class="pilot-track-top"><div><span id="pilot-phase">PISTA</span><strong id="pilot-live-time">—</strong></div><div><span>VOLTAS USADAS</span><strong id="pilot-live-quota">—</strong><small id="pilot-lap-sync" hidden>Sincronizando…</small></div></div>
       <p id="pilot-radio" role="status"></p>
       <div id="pilot-grid-signal" role="status" hidden><i aria-hidden="true"></i><strong></strong></div>
       <aside id="pilot-top-laps" class="live-top-laps" hidden><b>MINHAS 3 MELHORES</b><ol></ol></aside>
@@ -117,17 +120,16 @@ export function bootPilot({canvas,ctx,world}) {
     if (Number.isFinite(value) && value>=min && value<=max) setup[id]=value;
   }
   if (draft.preset==='manual') preset='manual';
-  let state=null, car=null, latest=null, pending=readLocal(pendingKey), saving=false, busy=false;
+  let state=null, car=null, latest=null, pending=asQueue(readLocal(pendingKey)), saving=false, busy=false;
   let attemptId=null, drivingPhase, runSetup, selectedReport=null;
   let savedRun=readLocal(runKey), lastCheckpoint=0, releaseRunLock;
   let warmup=readLocal(warmupKey);
-  let replayFrames=[], replayPollAt=0;
+  let replayFrames=[], replayPollAt=0, retryTimer=0;
   let liveryDraft=null, liveryDirty=false;
   addPilotTelemetry(ui,getState,format,()=>selectedReport??state?.phase,async id=>{
     const {openQualifyingReplay}=await import('./pilot-race-replay.js');
     await openQualifyingReplay(ui,world,getState,format,id);
   });
-  if(pending&&!pending.phase){pending=null;writeLocal(pendingKey,null);}
   let last=0, accumulator=0, camera=null, width=0, height=0, density=1, zoomFactor=1;
   const elapsed = ()=>car?.start == null ? null : Math.round((car.elapsed-car.start)*1000);
   const message = value => {$('.pilot-message').textContent=value;};
@@ -141,13 +143,14 @@ export function bootPilot({canvas,ctx,world}) {
     run.car.model?.cdA,run.car.model?.mechanicalGrip].every(Number.isFinite) && (run.attemptId
     ? run.attemptId===state.attemptId : state.canStart);
   const warmupLaps = () => warmup?.round===state.round && warmup?.driver===state.driver?.name ? warmup.used : 0;
+  const usedLaps = () => (state.used??0)+pending.filter(op=>op.phase===drivingPhase&&(op.start||op.nextId)).length;
   const canWarmup = () => !!state.driver && state.phase==='qualifying' && state.canStart
-    && !canResume(savedRun) && !pending && warmupLaps()<warmupLimit;
+    && !canResume(savedRun) && !pending.length && warmupLaps()<warmupLimit;
 
   function checkpoint() {
     if(!car||!timed(drivingPhase))return false;
     savedRun={round:state.round,phase:drivingPhase,driver:state.driver.name,car,setup:runSetup,
-      attemptId,latest,camera,zoomFactor,operation:pending,replayFrames,
+      attemptId,latest,camera,zoomFactor,operations:pending,replayFrames,
       opensAt:drivingPhase==='race'?raceOpensAt():null};
     return writeLocal(runKey,savedRun);
   }
@@ -277,7 +280,7 @@ export function bootPilot({canvas,ctx,world}) {
     $('.pilot-start-options').dataset.phase=phase ?? '';
     const resume=$('#pilot-resume');
     resume.hidden=!resumable;
-    resume.disabled=!!(pending||savedRun?.operation);
+    resume.disabled=!!(pending.length||runQueue(savedRun).length);
     resume.textContent=race?'Continuar Race':'Continuar Qualy';
     const warmupButton=$('#pilot-warmup');
     warmupButton.hidden=!canWarmup();
@@ -285,7 +288,7 @@ export function bootPilot({canvas,ctx,world}) {
     if(resumable)$('.pilot-start-note').textContent='Retome do ponto em que parou. O prazo da sessão continua valendo.';
     for(const button of ui.querySelectorAll('[data-pilot-start]')){
       button.hidden=resumable||(button.dataset.pilotStart==='grid')!==race;
-      button.disabled=!canStart||!!pending;
+      button.disabled=!canStart||!!pending.length;
     }
     if(!driver&&race)message('As inscrições encerraram. Pilotos inscritos podem entrar pelo navegador usado na inscrição.');
     const laps=pilotLapRows(state.history);
@@ -296,14 +299,14 @@ export function bootPilot({canvas,ctx,world}) {
       item.textContent=`V${lap.lap} · ${format(lap.ms)}`;
       return item;
     }));
-    $('#pilot-retry').hidden=!(pending||matchesRun(savedRun)&&savedRun.operation);
+    $('#pilot-retry').hidden=!(pending.length||matchesRun(savedRun)&&runQueue(savedRun).length);
     showReport();
     drawPreview();
   }
   async function refresh() {
     try {
       state=await getState();
-      if(!car&&matchesRun(savedRun)&&savedRun.operation)await retryLap();
+      if(!car&&(pending.length||matchesRun(savedRun)&&runQueue(savedRun).length))await retryLap();
       showState();
     }
     catch(error) {message(error.message);$('#pilot-retry').hidden=false;}
@@ -313,52 +316,71 @@ export function bootPilot({canvas,ctx,world}) {
     attemptId=null;
     keys.clear(); touches.clear();
     last=0; accumulator=0; showState();
-    if(!saving)unlockRun();
+    if(!saving&&!pending.length)unlockRun();
   }
+
+  function persistLaps() {
+    if(checkpoint())return;
+    if(!car&&matchesRun(savedRun)){
+      savedRun={...savedRun,operations:pending,operation:null};
+      if(writeLocal(runKey,savedRun))return;
+    }
+    writeLocal(pendingKey,pending.length?pending:null);
+  }
+
   async function saveLap() {
-    if (!pending || saving) return;
+    if(!pending.length||saving)return;
+    clearTimeout(retryTimer);
+    retryTimer=0;
     saving=true;
-    radio(pending.start?'Registrando início da volta…':'Gravando volta…');
     try {
-      const operation=pending;
-      state=await getState('/lap',pending);
-      if(car){car.bestSplits=state.bestSplits??null;attemptId=state.attemptId??null;}
-      pending=null;writeLocal(pendingKey,null);
-      if(timed(operation.phase)&&matchesRun(savedRun)&&savedRun.operation?.id===operation.id){
-        if(state.attemptId){
-          savedRun={...savedRun,attemptId:state.attemptId,operation:null};
-          savedRun.car.bestSplits=state.bestSplits??null;
-          writeLocal(runKey,savedRun);
-        }else clearRun();
+      while(pending.length){
+        const operation=pending[0];
+        state=await getState('/lap',operation);
+        pending.shift();
+        writeLocal(pendingKey,null);
+        if(!car&&timed(operation.phase)&&matchesRun(savedRun)&&!pending.length){
+          if(state.attemptId)savedRun={...savedRun,attemptId:state.attemptId};
+          else clearRun();
+        }
+        persistLaps();
       }
-      message('');
-      const sessionEnded=state.limit!=null&&state.used>=state.limit&&!state.attemptId;
-      if(!state.open||(!attemptId&&car)||sessionEnded) {
-        leave();
-        message(sessionEnded?'Sessão concluída. Seus tempos estão no histórico.':'A tentativa foi encerrada.');
+      if(!car){
+        const finished=state.limit!=null&&state.used>=state.limit&&!state.attemptId;
+        message(finished?'Sessão concluída. Seus tempos estão no histórico.':'Voltas sincronizadas.');
+        showState();
       }
-      showState();
     } catch(error) {
-      if ([400,401,409,410].includes(error.status)) {
-        if(savedRun?.operation?.id===pending?.id)clearRun();
-        pending=null;writeLocal(pendingKey,null);
+      if([400,401,409,410,413,415].includes(error.status)){
+        pending=[];
+        clearRun();
+        writeLocal(pendingKey,null);
+        leave();
+        await refresh();
+      }else{
+        retryTimer=setTimeout(saveLap,2500);
+        if(!car)showState();
       }
-      leave();message(error.message);
-      if(!pending)await refresh();
-    } finally {saving=false;accumulator=0;if(!car)unlockRun();}
+      message(error.status?error.message:'Conexão instável. O jogo vai reenviar as voltas salvas neste navegador.');
+    } finally {
+      saving=false;
+      if(!car&&!pending.length)unlockRun();
+    }
   }
   function submitLap(operation) {
-    pending=operation;
-    if(!checkpoint())writeLocal(pendingKey,pending);
-    saveLap();
+    pending.push(operation);
+    attemptId=operation.start?operation.id:operation.nextId;
+    persistLaps();
+    if(!saving&&!retryTimer)retryTimer=setTimeout(saveLap,0);
   }
   async function retryLap() {
     if(saving)return;
     if(!car&&timed(state?.phase)){
-      if(!await lockRun())return;
+      if(!releaseRunLock&&!await lockRun())return;
       savedRun=readLocal(runKey);
-      if(matchesRun(savedRun)&&savedRun.operation)pending=savedRun.operation;
-      else if(!pending||!readLocal(pendingKey)){pending=null;unlockRun();return;}
+      const operations=matchesRun(savedRun)?runQueue(savedRun):[];
+      if(operations.length)pending=operations;
+      else if(!pending.length){unlockRun();return;}
     }
     await saveLap();
   }
@@ -410,7 +432,7 @@ export function bootPilot({canvas,ctx,world}) {
     preset='manual';setup[e.target.name]=Number(e.target.value);engineerNote.hidden=true;syncSetup();
   });
   async function startDriving(mode) {
-    if(busy || pending) return;
+    if(busy||pending.length)return;
     if(wantsSound)setSound(true);
     busy=true;
     message('');
@@ -421,7 +443,7 @@ export function bootPilot({canvas,ctx,world}) {
       warmup=readLocal(warmupKey)??warmup;
       showState();
       if(mode==='resume'){
-        if(!canResume(savedRun)||savedRun.operation)return;
+        if(!canResume(savedRun)||runQueue(savedRun).length)return;
         ({car,attemptId,phase:drivingPhase,setup:runSetup,latest,camera,zoomFactor}=savedRun);
         replayFrames=savedRun.replayFrames??[];
         selectedReport=drivingPhase;
@@ -430,7 +452,7 @@ export function bootPilot({canvas,ctx,world}) {
         track.querySelector('[data-action=garage]').textContent='Pausar';
         return;
       }
-      if(canResume(savedRun)||matchesRun(savedRun)&&savedRun.operation)return;
+      if(canResume(savedRun)||matchesRun(savedRun)&&runQueue(savedRun).length)return;
       const training=mode==='warmup';
       if(training&&!canWarmup())return;
       if(!state.driver||!state.canStart||(mode==='grid')!==(state.phase==='race'))return;
@@ -470,7 +492,8 @@ export function bootPilot({canvas,ctx,world}) {
     }catch(error){message(error.message);}
     finally{button.disabled=false;}
   };
-  $('#pilot-retry').onclick=()=>pending||savedRun?.operation?retryLap():refresh();
+  $('#pilot-retry').onclick=()=>pending.length||runQueue(savedRun).length?retryLap():refresh();
+  addEventListener('online',()=>{if(pending.length)saveLap();});
   function exitTrack() {
     if(timed(drivingPhase)){
       if(!checkpoint()){radio('Não foi possível salvar a pausa neste navegador.');return;}
@@ -478,7 +501,6 @@ export function bootPilot({canvas,ctx,world}) {
       message('Sessão pausada. Você pode continuar até o horário de encerramento.');
       return;
     }
-    if(saving)return;
     leave();
   }
   track.addEventListener('click',e=>{
@@ -534,12 +556,17 @@ export function bootPilot({canvas,ctx,world}) {
     const dt=last?Math.min(.1,(now-last)/1000):0;
     last=now;
     if(car) {
-      if(Date.now()>=Date.parse(state.closesAt)&&!saving) {if(timed(drivingPhase))clearRun();leave();refresh();return;}
-      if(!saving&&!document.hidden) {
+      if(Date.now()>=Date.parse(state.closesAt)){
+        if(timed(drivingPhase)&&!pending.length)clearRun();
+        leave();
+        if(!pending.length)refresh();
+        return;
+      }
+      if(!document.hidden) {
         accumulator+=dt;
         const pressed=new Set([...keys,...touches.values()]);
         const input=Object.fromEntries([...pressed].map(key=>[key,true]));
-        while(car&&accumulator>=PILOT_STEP&&!saving) {
+        while(car&&accumulator>=PILOT_STEP) {
           accumulator-=PILOT_STEP;
           const before=car.start;
           const lap=stepPilot(car,input);
@@ -555,7 +582,7 @@ export function bootPilot({canvas,ctx,world}) {
             }
           }else if(lap) {
             latest=lap;
-            const nextId=state.limit==null||state.used<state.limit?crypto.randomUUID():null;
+            const nextId=state.limit==null||usedLaps()<state.limit?crypto.randomUUID():null;
             let replay;
             if(timed(drivingPhase)){
               if(replayFrames[0]?.[0]===0){
@@ -566,6 +593,10 @@ export function bootPilot({canvas,ctx,world}) {
               replayFrames=[replayPoint(car,0,0)];
             }
             submitLap({...lap,id:attemptId,nextId,phase:drivingPhase,replay});
+            if(!nextId){
+              leave();
+              message('Última volta concluída. Sincronizando os tempos…');
+            }
           }else if(before===null&&car.start!==null){
             if(timed(drivingPhase))replayFrames=[replayPoint(car,0,0)];
             submitLap({start:true,id:crypto.randomUUID(),phase:drivingPhase,setup:runSetup});
@@ -580,7 +611,14 @@ export function bootPilot({canvas,ctx,world}) {
         }
       }
       if(car) {
-        if(!saving&&now-lastCheckpoint>=500&&timed(drivingPhase)){checkpoint();lastCheckpoint=now;}
+        if(now-lastCheckpoint>=500&&timed(drivingPhase)){checkpoint();lastCheckpoint=now;}
+        if(drivingPhase!=='warmup'){
+          const used=usedLaps();
+          const quota=state.limit==null?String(used):`${used} / ${state.limit}`;
+          const label=$('#pilot-live-quota');
+          if(label.textContent!==quota)label.textContent=quota;
+        }
+        $('#pilot-lap-sync').hidden=!pending.length;
         const signal=$('#pilot-grid-signal'), red=car.gridRed>0, green=!red&&car.gridAssist>0;
         signal.hidden=!(red||green);
         if(red||green){
@@ -605,7 +643,7 @@ export function bootPilot({canvas,ctx,world}) {
         }
         $('.pilot-speed span').dataset.available=String(!car.pit&&drsZoneAt(car.s)>=0);
         $('.pilot-speed span').dataset.active=String(car.drs);
-        if(!saving)radio(red?'Aguarde o sinal verde.':green?'Largada liberada · mantenha W ou ↑ para acelerar.':car.pit?'Segure W para sair dos boxes.':car.spin>0?'Rodada · alivie os comandos para recuperar.':car.locked?'Rodas travadas · alivie o freio.':car.off?'Brita · aderência reduzida.':car.start===null?'Cruze a linha para começar o cronômetro.':car.invalid?'Volta inválida após reposicionamento.':latest?`Última volta ${format(latest.ms)}${latest.valid?'':' · inválida'}`:'Volta cronometrada em andamento.');
+        radio(red?'Aguarde o sinal verde.':green?'Largada liberada · mantenha W ou ↑ para acelerar.':car.pit?'Segure W para sair dos boxes.':car.spin>0?'Rodada · alivie os comandos para recuperar.':car.locked?'Rodas travadas · alivie o freio.':car.off?'Brita · aderência reduzida.':car.start===null?'Cruze a linha para começar o cronômetro.':car.invalid?'Volta inválida após reposicionamento.':latest?`Última volta ${format(latest.ms)}${latest.valid?'':' · inválida'}`:'Volta cronometrada em andamento.');
       }
     } else racingAudio.update();
     paint(car??idle);
@@ -613,7 +651,7 @@ export function bootPilot({canvas,ctx,world}) {
   resize();addEventListener('resize',resize);
   syncSetup();drawPreview();refresh();requestAnimationFrame(frame);
   setInterval(()=>{
-    if(car||busy||saving||!state)return;
+    if(car||busy||saving||pending.length||!state)return;
     const now=Date.now();
     if(state.driver&&!state.replayReady&&now>=Date.parse(state.replayAt)&&now>=replayPollAt){
       replayPollAt=now+5000;
