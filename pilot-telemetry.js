@@ -1,5 +1,7 @@
 import {drawCar} from './car-renderer.js';
 import {PILOT_SETUP,PRESETS,SETUP,setupFor} from './pilot-driving.js';
+import {CIRCUIT,circuitById} from './circuits.js';
+import {pilotRoundById,pilotRoundUrl} from './pilot-rounds.js';
 
 const METRICS=[
   ['best','Melhor volta','Melhor volta completa de cada piloto.'],
@@ -10,7 +12,12 @@ const METRICS=[
 ];
 const PRESET_SETUPS=Object.keys(PRESETS).map(id=>[PRESETS[id].name,setupFor(id)]);
 const shortSector=ms=>ms==null?'—':`${(ms/1000).toFixed(3)} s`;
-const roundLabel=round=>round==='legacy'?'Teste inicial':`Rodada de ${round.slice(8,10)}/${round.slice(5,7)}`;
+const roundLabel=round=>{
+  if(round==='legacy')return 'Teste inicial';
+  const definition=pilotRoundById(round);
+  const date=`${round.slice(8,10)}/${round.slice(5,7)}`;
+  return definition?`${circuitById(definition.circuit).name} · ${date}`:`Rodada de ${date}`;
+};
 
 function setupLabel(setup) {
   if(!setup)return 'Acerto sem registro';
@@ -69,7 +76,7 @@ function carDetails(entry,metric) {
   return box;
 }
 
-export function addPilotTelemetry(ui,load,format,getPhase,playLap) {
+export function addPilotTelemetry(ui,load,format,getPhase,currentRound,playLap) {
   const dialog=document.createElement('dialog');
   dialog.className='telemetry-dialog';
   dialog.id='pilot-telemetry';
@@ -77,7 +84,7 @@ export function addPilotTelemetry(ui,load,format,getPhase,playLap) {
   dialog.innerHTML=`
     <div class="pilot-dialog-panel">
       <div class="pilot-dialog-head">
-        <div><p class="pilot-kicker">GP DE INTERLAGOS</p><h2 id="telemetry-title">Telemetria</h2></div>
+        <div><p class="pilot-kicker">GP · ${CIRCUIT.name.toUpperCase()}</p><h2 id="telemetry-title">Telemetria</h2></div>
         <form method="dialog"><button class="pilot-dialog-close" aria-label="Fechar telemetria" autofocus>Fechar <span aria-hidden="true">×</span></button></form>
       </div>
       <p id="telemetry-status" class="telemetry-status" role="status"></p>
@@ -146,7 +153,13 @@ export function addPilotTelemetry(ui,load,format,getPhase,playLap) {
       pace.append(mainTime,detail);
       if(phase==='qualifying'&&metric==='best'){
         const id=entry.best.replayId;
-        if(id){
+        if(id&&report.round!==currentRound){
+          const link=document.createElement('a');
+          link.href=pilotRoundUrl(report.round);
+          link.className='telemetry-replay';
+          link.textContent='Abrir rodada para ver replay';
+          pace.append(link);
+        }else if(id){
           const button=document.createElement('button');
           button.type='button';
           button.className='telemetry-replay';
@@ -178,6 +191,7 @@ export function addPilotTelemetry(ui,load,format,getPhase,playLap) {
       const result=await load(round?`/telemetry?round=${encodeURIComponent(round)}`:'/telemetry');
       if(request!==requestNumber)return;
       report=result;
+      $('.pilot-kicker').textContent=`GP · ${circuitById(report.circuit).name.toUpperCase()}`;
       if(!phase||round&&!report.sessions.find(s=>s.id===phase)?.entries.length){
         phase=report.sessions.find(s=>s.entries.length)?.id??'practice';
       }

@@ -70,12 +70,12 @@ async function openReplay(ui,world,getState,format,lap) {
   dialog.className='pilot-replay';
   dialog.setAttribute('aria-labelledby','pilot-replay-title');
   dialog.innerHTML=`
-    <header><div><span>GP DE INTERLAGOS${lap?' · CLASSIFICAÇÃO':''}</span><h2 id="pilot-replay-title">${lap?'Replay da volta':'Assista a corrida'}</h2></div>
+    <header><div><span>${CIRCUIT.name.toUpperCase()}${lap?' · CLASSIFICAÇÃO':''}</span><h2 id="pilot-replay-title">${lap?'Replay da volta':'Assista a corrida'}</h2></div>
     <button type="button" data-close>Fechar</button></header>
     <p role="status">Carregando ${lap?'a volta':'a corrida'}…</p>
     <div class="pilot-replay-content" hidden>
       <div class="pilot-replay-track">
-        <canvas aria-label="Replay no circuito de Interlagos"></canvas>
+        <canvas aria-label="Replay no circuito ${CIRCUIT.name}"></canvas>
         ${lap?'':`<div class="pilot-broadcast-overlay"><div class="pilot-broadcast-camera" data-shot></div>
           <div class="pilot-broadcast-headline" data-headline role="status" hidden></div></div>`}
       </div>
@@ -173,7 +173,7 @@ async function openReplay(ui,world,getState,format,lap) {
             const gap=replayGap(behind,ahead,time);
             const metres=Math.round((ahead.progress-behind.progress)*CIRCUIT.metres);
             shotLabel.textContent=`Disputa · ${ahead.name} × ${behind.name} · ~${metres} m${gap==null?'':` · ${formatGap(gap)}`}`;
-          }else shotLabel.textContent=focus.length?`Câmera · ${focus[0].name}`:'Circuito de Interlagos';
+          }else shotLabel.textContent=focus.length?`Câmera · ${focus[0].name}`:CIRCUIT.name;
           const eventIndex=events.findLastIndex(event=>event.time<=time);
           const event=events[eventIndex];
           const active=event&&time-event.time<4500;

@@ -9,6 +9,7 @@ import {at,ROAD} from './track.js';
 import {engineRevs} from './racing-audio.js';
 import {fastestLaps,lapHistoryTable,pilotLapRows} from './lap-history.js';
 import {broadcastEvents,interpolateReplay,replayGap,replayPosition,timingReference} from './pilot-replay-timing.js';
+import {parseRoute} from './routes.js';
 
 test('invitation, unlimited practice, session limits, retries and deadline',async()=>{
   const sqlite=new DatabaseSync(':memory:');
@@ -21,9 +22,13 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
     all:async()=>({results:sqlite.prepare(sql).all(...args)}),
     run:async()=>({meta:sqlite.prepare(sql).run(...args)})
   };}};}}};
-  const send=(path='',data,cookie,now)=>practiceAPI(new Request('https://test.invalid/api/practice'+path,{
-    method:data?'POST':'GET',headers:{'Content-Type':'application/json',cookie:cookie??''},body:data&&JSON.stringify({...(path==='/lap'?{phase:'practice'}:{}),...data})
-  }),env,now);
+  const send=(path='',data,cookie,now,series='2026-11-22-weekend')=>{
+    const url=new URL('https://test.invalid/api/practice'+path);
+    if(series)url.searchParams.set('series',series);
+    return practiceAPI(new Request(url,{
+      method:data?'POST':'GET',headers:{'Content-Type':'application/json',cookie:cookie??''},body:data&&JSON.stringify({...(path==='/lap'?{phase:'practice'}:{}),...data})
+    }),env,now);
+  };
   assert.equal((await send('/register',{name:'Teste',invite:'wrong'})).status,403);
   const register=await send('/register',{name:'Piloto Teste',color:'#aabbcc',invite:'test-only'});
   assert.equal(register.status,201);
@@ -209,6 +214,44 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   assert.equal(playbackSecond.laps[0].ms,59900);
   assert.equal((await send('/replay?grid=3',null,cookie,raceEnd)).status,404);
   assert.equal((await send('/replay?grid=99',null,cookie,raceEnd)).status,404);
+
+  const currentSeries='2026-11-25-red-bull-ring';
+  const practiceNow=Date.parse('2026-11-25T16:00:00Z');
+  const opened=await (await send('',null,cookie,practiceNow,null)).json();
+  assert.equal(opened.round,currentSeries);
+  assert.equal(opened.circuit,'red-bull-ring');
+  assert.equal(opened.driver.name,'Piloto Teste');
+  assert.equal(opened.used,0);
+  assert.deepEqual(opened.sessions.map(s=>[s.id,s.limit,s.closesAt]),[
+    ['practice',45,'2026-11-26T02:59:59.999Z'],['qualifying',6,'2026-11-27T02:59:59.999Z'],['race',20,'2026-11-28T02:59:59.999Z']
+  ]);
+  assert.equal((await send('/lap',{phase:'practice',start:true,id:crypto.randomUUID()},cookie,practiceNow,null)).status,409);
+  const startPractice=await send('/lap',{phase:'practice',start:true,id:crypto.randomUUID()},cookie,practiceNow,currentSeries);
+  let practiceId=(await startPractice.json()).attemptId;
+  for(let i=1;i<=45;i++){
+    const reply=await send('/lap',{phase:'practice',id:practiceId,ms:60000,valid:true,nextId:crypto.randomUUID()},cookie,practiceNow,currentSeries);
+    assert.equal(reply.status,200);
+    const snapshot=await reply.json();
+    assert.equal(snapshot.history.filter(lap=>lap.ms!=null).length,i);
+    practiceId=snapshot.attemptId;
+  }
+  assert.equal(practiceId,null);
+  const capped=await (await send('',null,cookie,practiceNow,currentSeries)).json();
+  assert.equal(capped.used,45);
+  assert.equal(capped.canStart,false);
+  assert.equal((await send('/lap',{phase:'practice',start:true,id:crypto.randomUUID()},cookie,practiceNow,currentSeries)).status,409);
+  assert.equal((await send(qualifyPath,null,cookie,practiceNow,currentSeries)).status,404);
+  const archived=await (await send('/replay',null,cookie,practiceNow)).json();
+  assert.deepEqual(archived.drivers.map(d=>d.official),manifest.drivers.map(d=>d.official));
+  const nextQualy=await (await send('',null,cookie,Date.parse('2026-11-26T03:00:00Z'),currentSeries)).json();
+  const nextRace=await (await send('',null,cookie,Date.parse('2026-11-27T03:00:00Z'),currentSeries)).json();
+  assert.deepEqual([nextQualy.phase,nextQualy.used,nextRace.phase,nextRace.limit],['qualifying',0,'race',20]);
+});
+
+test('Pilotar loads the current series circuit and the archived circuit independently',()=>{
+  assert.equal(parseRoute('/pilotar').circuit,'red-bull-ring');
+  assert.equal(parseRoute('/pilotar?rodada=2026-11-22-weekend').circuit,'interlagos');
+  assert.equal(parseRoute('/assistir/monza').circuit,'monza');
 });
 
 test('grid starts in qualifying slots, holds on red and moves automatically on green',()=>{

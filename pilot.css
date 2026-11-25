@@ -46,6 +46,8 @@
 .pilot-garage h1 { font-size: clamp(2.6rem,6vw,6.5rem); margin: .6rem 0 1rem; }
 .pilot-garage p { line-height: 1.5; color: #bfcec3; margin: .5rem 0 1rem; }
 .pilot-intro { min-width: 0; }
+.pilot-round-links { display: flex; flex-wrap: wrap; gap: .45rem 1rem; margin: 0 0 .85rem; font-size: .86rem; }
+.pilot-round-links a { color: var(--lime); }
 .pilot-car-stage { margin-top: 1.5rem; border: 1px solid #e2f0e123; background: linear-gradient(115deg,#131e1c,#1d3028); position: relative; overflow: hidden; }
 .pilot-car-stage canvas { display: block; width: 100%; max-height: 230px; object-fit: contain; }
 .pilot-car-stage > div { position: absolute; top: .8rem; right: 1rem; text-align: right; }

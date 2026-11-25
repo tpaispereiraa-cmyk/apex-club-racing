@@ -1,5 +1,7 @@
 import {drawCar} from './car-renderer.js';
-import {at, length, W, H} from './track.js';
+import {at, CIRCUIT, length, W, H} from './track.js';
+import {circuitById} from './circuits.js';
+import {ACTIVE_PILOT_ROUND,PILOT_ROUNDS,pilotRoundById,pilotRoundUrl} from './pilot-rounds.js';
 import {drsZoneAt} from './track-profile.js';
 import {sectorDelta, SECTOR_COLORS} from './sector-timing.js';
 import {createRacingAudio} from './racing-audio.js';
@@ -13,13 +15,17 @@ const closeDate = new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'2-digit'
 const deadline = date => closeDate.format(new Date(date));
 const patterns = {clean:'Clássica',stripe:'Listras',chevron:'Setas',checkers:'Xadrez',split:'Diagonal',bolt:'Raio'};
 const phases = {
-  practice:{title:'Treino <em>livre.</em>',instructions:()=> 'Voltas ilimitadas para testar acertos e buscar seu melhor tempo até o fim da sessão.'},
+  practice:{title:'Treino <em>livre.</em>',instructions:limit=>limit==null
+    ?'Voltas ilimitadas para testar acertos e buscar seu melhor tempo até o fim da sessão.'
+    :`Até ${limit} voltas para testar acertos e buscar seu melhor tempo até o fim da sessão.`},
   qualifying:{title:'Classifi<em>cação.</em>',instructions:limit=>`Uma saída com ${limit} voltas rápidas seguidas. A melhor define seu lugar no grid.`},
   race:{title:'Dia de <em>corrida.</em>',instructions:limit=>`${limit} voltas rápidas, com pista seca, sem desgaste de pneus e com combustível constante. Cada posição atrás da pole soma 1,3 s ao tempo em pista.`}
 };
 const draftKey = 'apex-practice-setup-v1';
-const pendingKey = 'apex-practice-pending-v1';
-const runKey = 'apex-pilot-run-v1';
+const pilotRound=pilotRoundById(new URLSearchParams(location.search).get('rodada'))??ACTIVE_PILOT_ROUND;
+const roundSuffix=pilotRound.id==='2026-11-22-weekend'?'':`:${pilotRound.id}`;
+const pendingKey = `apex-practice-pending-v1${roundSuffix}`;
+const runKey = `apex-pilot-run-v1${roundSuffix}`;
 const warmupKey = 'apex-pilot-warmup-v1';
 const warmupLimit = 20;
 function readLocal(key) { try {return JSON.parse(localStorage.getItem(key));} catch {return null;} }
@@ -31,7 +37,9 @@ const runQueue=run=>asQueue(run?.operations??run?.operation);
 
 async function getState(path='', data) {
   const body=data ? JSON.stringify(data) : null;
-  const response = await fetch('/api/practice'+path,body ? {
+  const url=new URL('/api/practice'+path,location.origin);
+  url.searchParams.set('series',pilotRound.id);
+  const response = await fetch(url,body ? {
     method:'POST',headers:{'Content-Type':'application/json'},body,keepalive:body.length<48000,
     signal:path==='/lap'?AbortSignal.timeout?.(10000):undefined
   } : {cache:'no-store'});
@@ -51,14 +59,16 @@ function replayPoint(car,ms,progress) {
 
 export function bootPilot({canvas,ctx,world}) {
   document.body.classList.add('pilot-mode');
-  document.title='APEX CLUB — GP de Interlagos';
+  document.title=`APEX CLUB — ${CIRCUIT.name}`;
   const ui=document.createElement('section');
   ui.id='pilot';
   ui.innerHTML=`
-    <nav class="pilot-nav"><a href="/" aria-label="Voltar ao APEX CLUB"><strong>A</strong> APEX CLUB</a><span>INTERLAGOS / PILOTAR</span><button id="pilot-sound" class="icon-button" aria-pressed="false">SOM OFF</button></nav>
-    <button type="button" id="pilot-replay-banner" hidden><strong>Assista a corrida</strong><span>Replay do GP de Interlagos →</span></button>
+    <nav class="pilot-nav"><a href="/" aria-label="Voltar ao APEX CLUB"><strong>A</strong> APEX CLUB</a><span>${CIRCUIT.name.toUpperCase()} / PILOTAR</span><button id="pilot-sound" class="icon-button" aria-pressed="false">SOM OFF</button></nav>
+    <button type="button" id="pilot-replay-banner" hidden><strong>Assista a corrida</strong><span>Replay · ${CIRCUIT.name} →</span></button>
     <div class="pilot-garage">
-      <section class="pilot-intro"><span class="pilot-kicker">GP DE INTERLAGOS</span><h1>Treino <em>livre.</em></h1><p id="pilot-deadline">Consultando o cronograma…</p>
+      <section class="pilot-intro"><span class="pilot-kicker">GP · ${CIRCUIT.name.toUpperCase()}</span><h1>Treino <em>livre.</em></h1><p id="pilot-deadline">Consultando o cronograma…</p>
+      <nav class="pilot-round-links" aria-label="Rodadas">${PILOT_ROUNDS.filter(round=>round.id!==pilotRound.id).map(round=>
+        `<a href="${pilotRoundUrl(round.id)}">${round.id===ACTIVE_PILOT_ROUND.id?'Rodada atual':'Resultados e replay'} · ${circuitById(round.circuit).name} →</a>`).join('')}</nav>
       <div class="pilot-schedule" role="group" aria-label="Sessões do GP"></div>
       <p class="pilot-session-note" id="pilot-session-note"></p>
       <button id="pilot-open-telemetry" type="button" aria-haspopup="dialog" aria-controls="pilot-telemetry"><span class="telemetry-glyph" aria-hidden="true"><i></i><i></i><i></i></span><span><b>Telemetria</b><small>Compare voltas e setores dos pilotos</small></span></button>
@@ -126,7 +136,7 @@ export function bootPilot({canvas,ctx,world}) {
   let warmup=readLocal(warmupKey);
   let replayFrames=[], replayPollAt=0, retryTimer=0;
   let liveryDraft=null, liveryDirty=false;
-  addPilotTelemetry(ui,getState,format,()=>selectedReport??state?.phase,async id=>{
+  addPilotTelemetry(ui,getState,format,()=>selectedReport??state?.phase,pilotRound.id,async id=>{
     const {openQualifyingReplay}=await import('./pilot-race-replay.js');
     await openQualifyingReplay(ui,world,getState,format,id);
   });
@@ -144,7 +154,7 @@ export function bootPilot({canvas,ctx,world}) {
     ? run.attemptId===state.attemptId : state.canStart);
   const warmupLaps = () => warmup?.round===state.round && warmup?.driver===state.driver?.name ? warmup.used : 0;
   const usedLaps = () => (state.used??0)+pending.filter(op=>op.phase===drivingPhase&&(op.start||op.nextId)).length;
-  const canWarmup = () => !!state.driver && state.phase==='qualifying' && state.canStart
+  const canWarmup = () => pilotRound.warmup && !!state.driver && state.phase==='qualifying' && state.canStart
     && !canResume(savedRun) && !pending.length && warmupLaps()<warmupLimit;
 
   function checkpoint() {
@@ -395,7 +405,7 @@ export function bootPilot({canvas,ctx,world}) {
     message('');
     try {
       state=await getState('/register',Object.fromEntries(new FormData(form)));
-      if(params.has('convite'))history.replaceState(null,'',location.pathname);
+      if(params.has('convite'))history.replaceState(null,'',location.pathname+location.search);
       showState();
     } catch(error) {message(error.message);}
     finally {busy=false;form.querySelector('button').disabled=false;}
