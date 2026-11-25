@@ -1,0 +1,1 @@
+ALTER TABLE practice_laps ADD COLUMN quota_exempt INTEGER NOT NULL DEFAULT 0;

@@ -143,13 +143,14 @@ async function telemetry(db,driver,selectedRound,env,now,requestedRound) {
 async function reserveAttempt(db,roundId,driverId,{id:phase,limit},id,{first=false,setup=null}={}) {
   // An exclusive phase only accepts a fresh run while its quota is empty.
   const max=first&&phase!=='practice'?1:limit;
-  await db.prepare('INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid,round_key,phase,setup_json) SELECT ?,?,0,0,?,?,? WHERE ? IS NULL OR (SELECT count(*) FROM practice_laps WHERE driver_id=? AND round_key=? AND phase=?) < ? ON CONFLICT(driver_id,lap_id) DO NOTHING')
+  await db.prepare('INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid,round_key,phase,setup_json) SELECT ?,?,0,0,?,?,? WHERE ? IS NULL OR (SELECT count(*) FROM practice_laps WHERE driver_id=? AND round_key=? AND phase=? AND quota_exempt=0) < ? ON CONFLICT(driver_id,lap_id) DO NOTHING')
     .bind(driverId,id,roundId,phase,setup?JSON.stringify(setup):null,max,driverId,roundId,phase,max).run();
   return findAttempt(db,roundId,driverId,phase,id);
 }
 
 async function standings(db,roundId,phase) {
-  const {results}=await db.prepare(`SELECT d.id, d.name, d.color, d.livery, count(l.lap_id) AS used,
+  const {results}=await db.prepare(`SELECT d.id, d.name, d.color, d.livery,
+    count(CASE WHEN l.quota_exempt=0 OR l.elapsed_ms>0 THEN 1 END) AS used,
     min(CASE WHEN l.valid=1 THEN l.elapsed_ms END) AS best,
     count(CASE WHEN l.elapsed_ms>0 THEN 1 END) AS completed,
     count(CASE WHEN l.elapsed_ms>0 AND l.replay_json IS NOT NULL THEN 1 END) AS recorded,
@@ -208,10 +209,12 @@ async function state(db,round,driver,sessions,now) {
   const replayAvailable=replayReady&&!!await row(db,`SELECT 1 AS recorded FROM practice_laps l
     JOIN practice_drivers d ON d.id=l.driver_id
     WHERE d.event_id=? AND l.round_key=? AND l.phase='race' AND l.elapsed_ms>0 AND l.replay_json IS NOT NULL LIMIT 1`,EVENT,roundId);
-  const {results}=await db.prepare('SELECT lap_id AS id,phase,elapsed_ms AS ms,valid,splits,setup_json FROM practice_laps WHERE driver_id=? AND round_key=? ORDER BY rowid').bind(driver.id,roundId).all();
+  const {results}=await db.prepare(`SELECT lap_id AS id,phase,elapsed_ms AS ms,valid,splits,setup_json,quota_exempt
+    FROM practice_laps WHERE driver_id=? AND round_key=? AND (quota_exempt=0 OR elapsed_ms>0) ORDER BY rowid`).bind(driver.id,roundId).all();
   const byPhase=Object.fromEntries(sessions.map(({id})=>[id,results.filter(l=>l.phase===id)]));
   const bestOf=laps=>laps.filter(l=>l.valid).sort((a,b)=>a.ms-b.ms||Number(!!b.splits)-Number(!!a.splits))[0];
   const activeLaps=byPhase[active?.id??'race'], best=bestOf(activeLaps);
+  const used=activeLaps.filter(lap=>!lap.quota_exempt).length;
   const historyRows=laps=>laps.map(({ms,valid,splits})=>({ms:ms||null,valid:!!valid,splits:splits?JSON.parse(splits):null}));
   const qualifyRows=sessions[1].status==='closed'?await standings(db,roundId,'qualifying'):null;
   const finalGrid=replayReady?await raceGrid(db,roundId,qualifyRows,race.limit):null;
@@ -239,9 +242,9 @@ async function state(db,round,driver,sessions,now) {
   const {results:savedSetups}=await db.prepare('SELECT name,setup_json FROM practice_saved_setups WHERE driver_id=? ORDER BY name_key').bind(driver.id).all();
   return {...basic,replayAvailable,driver:{name:driver.name,color:driver.color,livery:liveryOf(driver),login:driver.login??null},sessions:reports,
     savedSetups:savedSetups.map(({name,setup_json})=>({name,setup:JSON.parse(setup_json)})),
-    used:activeLaps.length,best:best?.ms??null,bestSplits:best?.splits?JSON.parse(best.splits):null,history:historyRows(activeLaps),
+    used,best:best?.ms??null,bestSplits:best?.splits?JSON.parse(best.splits):null,history:historyRows(activeLaps),
     attemptId:active ? activeLaps.findLast(lap=>lap.ms===0)?.id??null : null,
-    canStart:!!active&&(active.id==='practice'?active.limit==null||activeLaps.length<active.limit:activeLaps.length===0),
+    canStart:!!active&&(active.id==='practice'?active.limit==null||used<active.limit:used===0),
     grid,lockedSetup:locked?JSON.parse(locked.setup_json):null};
 }
 

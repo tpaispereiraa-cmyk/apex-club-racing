@@ -14,7 +14,7 @@ import {parseRoute} from './routes.js';
 
 function practiceFixture(){
   const sqlite=new DatabaseSync(':memory:');
-  for(const file of ['0000_practice','0001_practice_splits','0002_pilot_weekend','0003_race_replay','0004_pilot_accounts']){
+  for(const file of ['0000_practice','0001_practice_splits','0002_pilot_weekend','0003_race_replay','0004_pilot_accounts','0005_practice_quota']){
     sqlite.exec(readFileSync(new URL(`./drizzle/${file}.sql`,import.meta.url),'utf8'));
   }
   const env={PRACTICE_INVITE:'test-only',PRACTICE_CLOSES_AT:'2090-01-01T00:00:00Z',DB:{prepare(sql){return{bind(...args){return{
@@ -314,6 +314,20 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   assert.equal(capped.used,45);
   assert.equal(capped.canStart,false);
   assert.equal((await send('/lap',{phase:'practice',start:true,id:crypto.randomUUID()},cookie,practiceNow,currentSeries)).status,409);
+  const unfinishedPractice=crypto.randomUUID();
+  assert.equal((await send('/lap',{phase:'practice',start:true,id:unfinishedPractice},secondCookie,practiceNow,currentSeries)).status,200);
+  sqlite.prepare("UPDATE practice_laps SET quota_exempt=1 WHERE round_key=? AND phase='practice'").run(currentSeries);
+  const reset=await (await send('',null,cookie,practiceNow,currentSeries)).json();
+  assert.deepEqual([reset.used,reset.limit,reset.canStart,reset.best],[0,45,true,60000]);
+  assert.deepEqual(reset.history,capped.history);
+  const resetOther=await (await send('',null,secondCookie,practiceNow,currentSeries)).json();
+  assert.deepEqual([resetOther.used,resetOther.attemptId,resetOther.history],[0,null,[]]);
+  const continuing=await send('/lap',{phase:'practice',id:unfinishedPractice,ms:60500,nextId:crypto.randomUUID()},secondCookie,practiceNow,currentSeries);
+  assert.equal(continuing.status,200);
+  assert.equal((await continuing.json()).used,1);
+  const freshStart=await send('/lap',{phase:'practice',start:true,id:crypto.randomUUID()},cookie,practiceNow,currentSeries);
+  assert.equal(freshStart.status,200);
+  assert.equal((await freshStart.json()).used,1);
   assert.equal((await send(qualifyPath,null,cookie,practiceNow,currentSeries)).status,404);
   const archived=await (await send('/replay',null,cookie,practiceNow)).json();
   assert.deepEqual(archived.drivers.map(d=>d.official),manifest.drivers.map(d=>d.official));
