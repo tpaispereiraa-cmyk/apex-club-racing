@@ -27,8 +27,9 @@ await writeFile(path.join(dist,'_headers'),'/*\n  X-Content-Type-Options: nosnif
 const server=path.join(dist,'server');
 await mkdir(server,{recursive:true});
 const pilotRounds=(await readFile(path.join(root,'pilot-rounds.js'),'utf8')).replace(/^export /gm,'');
+const pilotCredentials=(await readFile(path.join(root,'worker/pilot-credentials.js'),'utf8')).replace(/^export /gm,'');
 const api=(await readFile(path.join(root,'worker/practice-api.js'),'utf8'))
   .replace(/^import .*?;\r?\n/gm,'').replace('export async function practiceAPI','async function practiceAPI');
 const worker=(await readFile(path.join(root,'worker/index.js'),'utf8')).replace(/^import .*?;\r?\n/gm,'');
-await writeFile(path.join(server,'index.js'),`const assets = ${JSON.stringify(assets)};\n${pilotRounds}\n${api}\n${worker}`);
+await writeFile(path.join(server,'index.js'),`const assets = ${JSON.stringify(assets)};\n${pilotRounds}\n${pilotCredentials}\n${api}\n${worker}`);
 console.log(JSON.stringify({output:'dist',circuits:CIRCUITS.length,modes:3,routes:31,personalSavesIncluded:false}));

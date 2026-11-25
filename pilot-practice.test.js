@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {practiceAPI} from './worker/practice-api.js';
+import {hash} from './worker/pilot-credentials.js';
 import {GRID_ASSIST_TICKS,GRID_RED_TICKS,makePilotCar,recoverPilot,setupFor,stepPilot} from './pilot-driving.js';
 import {proposePilotSetup} from './pilot-engineer.js';
 import {at,ROAD} from './track.js';
@@ -11,12 +12,11 @@ import {fastestLaps,lapHistoryTable,pilotLapRows} from './lap-history.js';
 import {broadcastEvents,interpolateReplay,replayGap,replayPosition,timingReference} from './pilot-replay-timing.js';
 import {parseRoute} from './routes.js';
 
-test('invitation, unlimited practice, session limits, retries and deadline',async()=>{
+function practiceFixture(){
   const sqlite=new DatabaseSync(':memory:');
-  sqlite.exec(readFileSync(new URL('./drizzle/0000_practice.sql',import.meta.url),'utf8'));
-  sqlite.exec(readFileSync(new URL('./drizzle/0001_practice_splits.sql',import.meta.url),'utf8'));
-  sqlite.exec(readFileSync(new URL('./drizzle/0002_pilot_weekend.sql',import.meta.url),'utf8'));
-  sqlite.exec(readFileSync(new URL('./drizzle/0003_race_replay.sql',import.meta.url),'utf8'));
+  for(const file of ['0000_practice','0001_practice_splits','0002_pilot_weekend','0003_race_replay','0004_pilot_accounts']){
+    sqlite.exec(readFileSync(new URL(`./drizzle/${file}.sql`,import.meta.url),'utf8'));
+  }
   const env={PRACTICE_INVITE:'test-only',PRACTICE_CLOSES_AT:'2090-01-01T00:00:00Z',DB:{prepare(sql){return{bind(...args){return{
     first:async()=>sqlite.prepare(sql).get(...args)??null,
     all:async()=>({results:sqlite.prepare(sql).all(...args)}),
@@ -29,11 +29,83 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
       method:data?'POST':'GET',headers:{'Content-Type':'application/json',cookie:cookie??''},body:data&&JSON.stringify({...(path==='/lap'?{phase:'practice'}:{}),...data})
     }),env,now);
   };
+  return {sqlite,env,send};
+}
+
+test('legacy drivers can claim their car, carry named setups and a paused Qualy to another browser',async()=>{
+  const {sqlite,send}=practiceFixture(), legacyToken='a'.repeat(64), password='simple-test-password';
+  const driverId=await hash(legacyToken), oldBrowser=`apex_practice=${legacyToken}`;
+  const practice=Date.parse('2089-12-31T20:00:00Z'), qualy=Date.parse('2090-01-01T01:00:00Z');
+  const attempt=crypto.randomUUID();
+  sqlite.prepare(`INSERT INTO practice_drivers(id,event_id,name,name_key,color)
+    VALUES(?, 'interlagos-2026-11-21','Piloto Legado','piloto legado','#ffffff')`).run(driverId);
+  sqlite.prepare(`INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid,round_key,phase)
+    VALUES(?,?,65000,1,'2026-11-22-weekend','practice')`).run(driverId,crypto.randomUUID());
+  const account={login:'Piloto.Legado',password};
+  const validSetup={frontWing:8,rearWing:7,antiRoll:5,brakeBias:55,rideHeight:45};
+  const cookie=response=>response.headers.get('Set-Cookie').split(';')[0];
+  assert.deepEqual((await (await send('',null,null,practice)).json()).pilots,[{name:'Piloto Legado',canLogin:0}]);
+  assert.equal((await send('/credentials',account,null,practice)).status,401);
+  assert.equal((await send('/credentials',account,oldBrowser,practice)).status,200);
+  assert.equal((await send('/credentials',{...account,password:'other-password'},oldBrowser,practice)).status,409);
+  assert.notEqual(sqlite.prepare('SELECT password_hash FROM practice_drivers').get().password_hash,password);
+  assert.equal((await send('/register',{name:'Piloto Outro',invite:'test-only',...account},null,practice)).status,409);
+  assert.equal((await send('/login',{...account,password:'wrong-password'},null,practice)).status,401);
+  const byLogin=await send('/login',account,null,practice);
+  const freshBrowser=cookie(byLogin);
+  assert.notEqual(freshBrowser,oldBrowser);
+  assert.equal((await byLogin.json()).history[0].ms,65000);
+  assert.equal((await send('/setup',{name:'Chuva',setup:validSetup},null,practice)).status,401);
+  assert.equal((await send('/setup',{name:'Chuva',setup:{...validSetup,frontWing:20}},oldBrowser,practice)).status,400);
+  assert.equal((await send('/setup',{name:'  Volta   Rápida ',setup:validSetup},oldBrowser,practice)).status,200);
+  assert.equal((await send('/setup',{name:'Volta Rápida',setup:{...validSetup,frontWing:9}},oldBrowser,practice)).status,200);
+  assert.deepEqual((await (await send('',null,freshBrowser,practice)).json()).savedSetups,
+    [{name:'Volta Rápida',setup:{...validSetup,frontWing:9}}]);
+  const another=await send('/register',{name:'Outro piloto',invite:'test-only',login:'outro-piloto',password},null,practice);
+  const spectator=cookie(another);
+  assert.deepEqual((await another.json()).savedSetups,[]);
+  const bestPractice=crypto.randomUUID(), slowerPractice=crypto.randomUUID();
+  const practiceFrames=[[0,100,350,0,0],[63000,101,353,0,10000]];
+  for(const [id,ms] of [[slowerPractice,66000],[bestPractice,63000]]){
+    assert.equal((await send('/lap',{id,start:true,setup:validSetup},oldBrowser,practice)).status,200);
+    assert.equal((await send('/lap',{id,ms,valid:true,replay:[practiceFrames[0],[ms,101,353,0,10000]]},oldBrowser,practice)).status,200);
+  }
+  const leader=(await (await send('/telemetry',null,spectator,practice)).json()).sessions[0].entries[0];
+  assert.equal(leader.best.replayId,bestPractice);
+  const watch=`/lap-replay?lap=${bestPractice}&phase=`;
+  assert.equal((await send(watch+'practice',null,null,practice)).status,401);
+  assert.equal((await send(watch+'qualifying',null,spectator,practice)).status,404);
+  const replay=await (await send(watch+'practice',null,spectator,practice)).json();
+  assert.equal(replay.name,'Piloto Legado');
+  assert.equal(replay.ms,63000);
+  assert.deepEqual(JSON.parse(replay.frames),practiceFrames);
+  const run={round:'2026-11-22-weekend',phase:'qualifying',driver:'Piloto Legado',attemptId:attempt,setup:validSetup,
+    car:makePilotCar(validSetup,'#ffffff',null,'flying'),replayFrames:[],operations:[{not:'trusted'}]};
+  assert.equal((await send('/checkpoint',{run,version:0},oldBrowser,qualy)).status,409);
+  assert.equal((await send('/lap',{id:attempt,phase:'qualifying',start:true,setup:validSetup},oldBrowser,qualy)).status,200);
+  assert.equal((await send('/checkpoint',{run,version:0},oldBrowser,qualy)).status,200);
+  const byPilot=await send('/login',{pilot:run.driver,password},null,qualy);
+  const fromOtherPc=await (await send('/checkpoint',null,cookie(byPilot),qualy)).json();
+  assert.equal(fromOtherPc.version,1);
+  assert.equal(fromOtherPc.run.attemptId,attempt);
+  assert.deepEqual(fromOtherPc.run.operations,[]);
+  assert.equal((await send('/checkpoint',{run,version:0},freshBrowser,qualy)).status,409);
+  assert.equal((await send('/logout',{},freshBrowser,qualy)).status,200);
+  assert.equal((await (await send('',null,freshBrowser,qualy)).json()).driver,null);
+  assert.equal((await send('/lap',{id:attempt,phase:'qualifying',ms:64000,valid:true},oldBrowser,qualy)).status,200);
+  assert.equal((await (await send('/checkpoint',null,oldBrowser,qualy)).json()).run,null);
+  assert.equal(sqlite.prepare('SELECT count(*) AS count FROM practice_drivers').get().count,2);
+  sqlite.close();
+});
+
+test('invitation, unlimited practice, session limits, retries and deadline',async()=>{
+  const {sqlite,env,send}=practiceFixture();
+  const password='test-password';
   assert.equal((await send('/register',{name:'Teste',invite:'wrong'})).status,403);
-  const register=await send('/register',{name:'Piloto Teste',color:'#aabbcc',invite:'test-only'});
+  const register=await send('/register',{name:'Piloto Teste',color:'#aabbcc',invite:'test-only',login:'piloto',password});
   assert.equal(register.status,201);
   const cookie=register.headers.get('Set-Cookie').split(';')[0];
-  assert.equal((await send('/register',{name:'piloto teste',invite:'test-only'})).status,409);
+  assert.equal((await send('/register',{name:'piloto teste',invite:'test-only',login:'outro',password})).status,409);
   assert.equal((await (await send()).json()).driver,null);
   assert.equal((await send('/telemetry')).status,401);
   const driverId=sqlite.prepare('SELECT id FROM practice_drivers').get().id;
@@ -105,7 +177,7 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   assert.equal(afterPractice.used,0);
   assert.equal(afterPractice.sessions[0].board[0].best,87000);
   assert.equal((await send('/lap',{start:true,id:crypto.randomUUID()},cookie,qualStart)).status,410);
-  const second=await send('/register',{name:'Mais um',invite:'test-only'},undefined,qualStart);
+  const second=await send('/register',{name:'Mais um',invite:'test-only',login:'mais-um',password},undefined,qualStart);
   assert.equal(second.status,201);
   const secondCookie=second.headers.get('Set-Cookie').split(';')[0];
   const stint=async (sessionCookie,phase,now,times)=>{
@@ -157,7 +229,7 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   assert.deepEqual(JSON.parse(recordedQualy.frames),qualifyReplay);
   assert.equal((await send(qualifyPath,null,undefined,qualStart)).status,401);
   assert.equal((await send('/qualifying-replay?lap=missing',null,cookie,qualStart)).status,404);
-  const noShow=await send('/register',{name:'Só classificou',invite:'test-only'},undefined,qualStart);
+  const noShow=await send('/register',{name:'Só classificou',invite:'test-only',login:'so-classificou',password},undefined,qualStart);
   assert.equal(noShow.status,201);
   const noShowCookie=noShow.headers.get('Set-Cookie').split(';')[0];
   await stint(noShowCookie,'qualifying',qualStart,Array(6).fill(61500));

@@ -31,13 +31,14 @@ export function openRaceReplay(ui,world,getState,format) {
   return openReplay(ui,world,getState,format);
 }
 
-export function openQualifyingReplay(ui,world,getState,format,lap) {
-  return openReplay(ui,world,getState,format,lap);
+export function openLapReplay(ui,world,getState,format,lap,phase) {
+  return openReplay(ui,world,getState,format,lap,phase);
 }
 
-async function loadReplay(getState,lap,isOpen) {
+async function loadReplay(getState,lap,phase,isOpen) {
   if(lap){
-    const {name,livery,ms,frames}=await getState(`/qualifying-replay?lap=${encodeURIComponent(lap)}`);
+    const params=new URLSearchParams({lap,phase});
+    const {name,livery,ms,frames}=await getState(`/lap-replay?${params}`);
     return {limit:1,drivers:[{name,livery,grid:1,delay:0,duration:ms,official:ms,recorded:1,completed:1,
       laps:[{start:0,end:ms,frames:JSON.parse(frames)}]}],unavailable:false};
   }
@@ -65,12 +66,12 @@ async function loadReplay(getState,lap,isOpen) {
   return {drivers,limit:manifest.limit,unavailable};
 }
 
-async function openReplay(ui,world,getState,format,lap) {
+async function openReplay(ui,world,getState,format,lap,phase) {
   const dialog=document.createElement('dialog');
   dialog.className='pilot-replay';
   dialog.setAttribute('aria-labelledby','pilot-replay-title');
   dialog.innerHTML=`
-    <header><div><span>${CIRCUIT.name.toUpperCase()}${lap?' · CLASSIFICAÇÃO':''}</span><h2 id="pilot-replay-title">${lap?'Replay da volta':'Assista a corrida'}</h2></div>
+    <header><div><span>${CIRCUIT.name.toUpperCase()}${lap?(phase==='practice'?' · TREINO LIVRE':' · CLASSIFICAÇÃO'):''}</span><h2 id="pilot-replay-title">${lap?'Replay da volta':'Assista a corrida'}</h2></div>
     <button type="button" data-close>Fechar</button></header>
     <p role="status">Carregando ${lap?'a volta':'a corrida'}…</p>
     <div class="pilot-replay-content" hidden>
@@ -97,7 +98,7 @@ async function openReplay(ui,world,getState,format,lap) {
 
   const status=dialog.querySelector(':scope > [role=status]');
   try{
-    const {drivers,limit,unavailable}=await loadReplay(getState,lap,()=>dialog.open);
+    const {drivers,limit,unavailable}=await loadReplay(getState,lap,phase,()=>dialog.open);
     if(!dialog.open)return;
     if(!drivers.some(driver=>driver.recorded)){
       status.textContent=unavailable?'Não foi possível carregar as gravações. Feche e tente novamente.':'Ainda não há voltas gravadas para reproduzir.';

@@ -22,6 +22,10 @@ if (!sqlite.prepare('PRAGMA table_info(practice_laps)').all().some(c=>c.name==='
 if (!sqlite.prepare('PRAGMA table_info(practice_laps)').all().some(c=>c.name==='replay_json')) {
   sqlite.exec(await readFile(new URL('drizzle/0003_race_replay.sql',root),'utf8'));
 }
+if (!sqlite.prepare('PRAGMA table_info(practice_drivers)').all().some(c=>c.name==='login')) {
+  const migration=await readFile(new URL('drizzle/0004_pilot_accounts.sql',root),'utf8');
+  sqlite.exec(`BEGIN;\n${migration}\nCOMMIT;`);
+}
 const DB={prepare(sql){const stmt=sqlite.prepare(sql);return{bind(...args){return{
   first:async()=>stmt.get(...args)??null,
   all:async()=>({results:stmt.all(...args)}),

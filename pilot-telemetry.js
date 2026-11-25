@@ -151,7 +151,7 @@ export function addPilotTelemetry(ui,load,format,getPhase,currentRound,playLap) 
         ? sectors.map((ms,i)=>`S${i+1} ${shortSector(ms)}`).join(' · ')
         : entry.ms===leader.ms?'Referência':`+${shortSector(entry.ms-leader.ms)}`;
       pace.append(mainTime,detail);
-      if(phase==='qualifying'&&metric==='best'){
+      if((phase==='practice'||phase==='qualifying')&&metric==='best'){
         const id=entry.best.replayId;
         if(id&&report.round!==currentRound){
           const link=document.createElement('a');
@@ -167,7 +167,7 @@ export function addPilotTelemetry(ui,load,format,getPhase,currentRound,playLap) 
           button.setAttribute('aria-label',`Ver replay da volta de ${entry.name}`);
           button.onclick=async()=>{
             button.disabled=true;
-            try{await playLap(id);}
+            try{await playLap(id,phase);}
             catch(error){status.hidden=false;status.textContent=error.message;}
             finally{button.disabled=false;}
           };

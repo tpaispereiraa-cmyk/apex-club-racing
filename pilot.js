@@ -28,6 +28,8 @@ const pendingKey = `apex-practice-pending-v1${roundSuffix}`;
 const runKey = `apex-pilot-run-v1${roundSuffix}`;
 const warmupKey = 'apex-pilot-warmup-v1';
 const warmupLimit = 20;
+const loginFields = `<label>Login<input name="login" autocomplete="username" minlength="3" maxlength="24" pattern="[A-Za-z0-9][A-Za-z0-9_.\\-]{2,23}" title="3 a 24 caracteres: letras, números, ponto, hífen ou sublinhado" required></label>
+  <label>Senha<input name="password" type="password" autocomplete="new-password" minlength="6" maxlength="128" required></label>`;
 function readLocal(key) { try {return JSON.parse(localStorage.getItem(key));} catch {return null;} }
 function writeLocal(key, value) {
   try {localStorage.setItem(key,JSON.stringify(value));return true;} catch {return false;}
@@ -41,7 +43,7 @@ async function getState(path='', data) {
   url.searchParams.set('series',pilotRound.id);
   const response = await fetch(url,body ? {
     method:'POST',headers:{'Content-Type':'application/json'},body,keepalive:body.length<48000,
-    signal:path==='/lap'?AbortSignal.timeout?.(10000):undefined
+    signal:['/lap','/checkpoint'].includes(path)?AbortSignal.timeout?.(10000):undefined
   } : {cache:'no-store'});
   const result = await response.json().catch(()=>null);
   if (!response.ok || !result) {
@@ -78,7 +80,20 @@ export function bootPilot({canvas,ctx,world}) {
       <section id="pilot-results" hidden><h2></h2><p hidden>Nenhum tempo registrado nesta sessão.</p><ol></ol></section></section>
       <section class="pilot-form-card">
         <p class="pilot-message" role="status"></p>
-        <form id="pilot-register" hidden><h2>Inscrição de piloto</h2><label>Seu nome<input name="name" autocomplete="nickname" minlength="2" maxlength="32" required></label><label>Código do convite<input name="invite" autocomplete="off" required></label><label class="pilot-color">Cor de destaque<input type="color" name="color" value="#d5f561"></label><button class="pilot-button">Entrar no GP</button></form>
+        <div class="pilot-account-menu" hidden>
+          <button type="button" data-account="login">Entrar no meu carro</button><button type="button" data-account="register">Criar piloto</button>
+        </div>
+        <form id="pilot-login" hidden><h2>Entrar no meu carro</h2>
+          <label id="pilot-list-label">Escolha seu piloto<select name="pilot"><option value="">Usar meu login</option></select></label>
+          <label id="pilot-login-label">Login<input name="login" autocomplete="username" maxlength="24" required></label>
+          <label>Senha<input name="password" type="password" autocomplete="current-password" minlength="6" maxlength="128" required></label>
+          <button class="pilot-button">Entrar</button>
+        </form>
+        <form id="pilot-register" hidden><h2>Inscrição de piloto</h2><label>Seu nome<input name="name" autocomplete="nickname" minlength="2" maxlength="32" required></label><label>Código do convite<input name="invite" autocomplete="off" required></label>${loginFields}<label class="pilot-color">Cor de destaque<input type="color" name="color" value="#d5f561"></label><button class="pilot-button">Criar piloto</button></form>
+        <div id="pilot-account-info" hidden><p></p><button type="button" id="pilot-logout">Sair do meu carro</button></div>
+        <details id="pilot-credentials" hidden><summary>Cadastrar login e senha</summary>
+          <form><p>Use o login e a senha para acessar este carro em outro dispositivo.</p>${loginFields}<button class="pilot-button">Cadastrar login e senha</button></form>
+        </details>
         <div id="pilot-setup" hidden><h2 id="pilot-driver"></h2><p id="pilot-grid" hidden></p>
         <div id="pilot-acerto"><p>Escolha um acerto para a próxima saída.</p><div class="pilot-presets" role="group" aria-label="Acertos sugeridos">${Object.entries(PRESETS).map(([id,p])=>`<button data-preset="${id}" aria-pressed="false"><b>${p.name}</b><small>${p.description}</small></button>`).join('')}</div>
         <details><summary>Configuração avançada</summary><div class="pilot-sliders">${PILOT_SETUP.map(id=>{const s=SETUP[id];return `<label><span>${s.label} <output></output></span><input type="range" name="${id}" min="${s.min}" max="${s.max}" step="${s.step}"></label>`;}).join('')}</div></details>
@@ -86,7 +101,14 @@ export function bootPilot({canvas,ctx,world}) {
         <div class="pilot-start-options"><button class="pilot-button" data-pilot-start="pits">Sair dos boxes</button><button class="pilot-button" data-pilot-start="flying">Iniciar volta rápida</button><button class="pilot-button" data-pilot-start="grid" hidden>Ir para a largada</button><button class="pilot-button" id="pilot-resume" hidden>Continuar</button></div>
         <button class="pilot-button" id="pilot-warmup" hidden>Treinar</button>
         <p class="pilot-start-note"></p>
+        <button type="button" id="pilot-sync-pause" hidden>Sincronizar pausa</button>
         <p class="pilot-controls"><kbd>W</kbd> acelerar <kbd>A</kbd><kbd>D</kbd> virar <kbd>S</kbd> frear <kbd>E</kbd> DRS · Scroll para ajustar o zoom</p></div>
+        <details id="pilot-saved-setups" hidden><summary>Configurações salvas</summary>
+          <div class="pilot-load-setup"><label>Meus acertos<select></select></label><button type="button" id="pilot-load-setup" disabled>Carregar</button></div>
+          <form><label>Nome da configuração<input name="name" maxlength="40" required placeholder="Ex.: Red Bull Ring - Qualy"></label>
+            <button class="pilot-button">Salvar configuração do carro</button><output role="status"></output>
+          </form>
+        </details>
         <form id="pilot-livery" hidden><h2>Pintura do carro</h2><div class="pilot-paints">
         <label>Principal<input type="color" name="primary"></label><label>Secundária<input type="color" name="secondary"></label><label>Destaque<input type="color" name="accent"></label><label>Número<input type="number" name="number" min="1" max="99" required></label></div>
         <fieldset><legend>Estampa</legend><div class="pilot-patterns">${Object.entries(patterns).map(([id,label])=>`<label><input type="radio" name="pattern" value="${id}" required><span data-pattern="${id}">${label}</span></label>`).join('')}</div></fieldset>
@@ -106,6 +128,11 @@ export function bootPilot({canvas,ctx,world}) {
   document.body.append(ui);
   const $ = id => ui.querySelector(id);
   const form = $('#pilot-register'), garage = $('.pilot-garage'), track = $('.pilot-track');
+  const loginForm = $('#pilot-login'), credentialsForm = $('#pilot-credentials form');
+  const setupForm = $('#pilot-saved-setups form'), savedSetupSelect = $('#pilot-saved-setups select');
+  const inviteUrl=new URL(location.href);
+  const invite=inviteUrl.searchParams.get('convite')??new URLSearchParams(inviteUrl.hash.slice(1)).get('convite');
+  let accountMode=invite?'register':'login';
   const paintForm = $('#pilot-livery'), schedule = $('.pilot-schedule');
   const preview = $('#pilot-preview'), previewCtx = preview.getContext('2d');
   const racingAudio=createRacingAudio();
@@ -130,15 +157,16 @@ export function bootPilot({canvas,ctx,world}) {
     if (Number.isFinite(value) && value>=min && value<=max) setup[id]=value;
   }
   if (draft.preset==='manual') preset='manual';
-  let state=null, car=null, latest=null, pending=asQueue(readLocal(pendingKey)), saving=false, busy=false;
+  let state=null, car=null, latest=null, pending=[], saving=false, busy=false;
   let attemptId=null, drivingPhase, runSetup, selectedReport=null;
   let savedRun=readLocal(runKey), lastCheckpoint=0, releaseRunLock;
+  let cloudVersion=0, syncingPause=false, initialized=false;
   let warmup=readLocal(warmupKey);
   let replayFrames=[], replayPollAt=0, retryTimer=0;
   let liveryDraft=null, liveryDirty=false;
-  addPilotTelemetry(ui,getState,format,()=>selectedReport??state?.phase,pilotRound.id,async id=>{
-    const {openQualifyingReplay}=await import('./pilot-race-replay.js');
-    await openQualifyingReplay(ui,world,getState,format,id);
+  addPilotTelemetry(ui,getState,format,()=>selectedReport??state?.phase,pilotRound.id,async (id,phase)=>{
+    const {openLapReplay}=await import('./pilot-race-replay.js');
+    await openLapReplay(ui,world,getState,format,id,phase);
   });
   let last=0, accumulator=0, camera=null, width=0, height=0, density=1, zoomFactor=1;
   const elapsed = ()=>car?.start == null ? null : Math.round((car.elapsed-car.start)*1000);
@@ -157,12 +185,42 @@ export function bootPilot({canvas,ctx,world}) {
   const canWarmup = () => pilotRound.warmup && !!state.driver && state.phase==='qualifying' && state.canStart
     && !canResume(savedRun) && !pending.length && warmupLaps()<warmupLimit;
 
-  function checkpoint() {
+  function checkpoint(paused=false) {
     if(!car||!timed(drivingPhase))return false;
     savedRun={round:state.round,phase:drivingPhase,driver:state.driver.name,car,setup:runSetup,
-      attemptId,latest,camera,zoomFactor,operations:pending,replayFrames,
+      attemptId,latest,camera,zoomFactor,operations:pending,replayFrames,paused,cloudVersion,cloudSynced:false,
       opensAt:drivingPhase==='race'?raceOpensAt():null};
     return writeLocal(runKey,savedRun);
+  }
+
+  async function restoreCheckpoint() {
+    if(!state.driver||!timed(state.phase)||!state.open||pending.length||runQueue(savedRun).length&&matchesRun(savedRun))return;
+    const {version,run}=await getState('/checkpoint');
+    cloudVersion=version;
+    if(canResume(run)&&(!canResume(savedRun)||(savedRun.cloudVersion??0)<version)){
+      savedRun={...run,paused:true,cloudVersion:version,cloudSynced:true};
+      writeLocal(runKey,savedRun);
+    }
+  }
+
+  async function syncPausedRun(announce=true) {
+    if(syncingPause||saving||pending.length||!canResume(savedRun)||!savedRun.paused||savedRun.cloudSynced)return;
+    syncingPause=true;
+    const run=savedRun;
+    try{
+      const {version}=await getState('/checkpoint',{version:run.cloudVersion??0,run});
+      cloudVersion=version;
+      if(savedRun===run){
+        savedRun={...run,cloudVersion:version,cloudSynced:true};
+        writeLocal(runKey,savedRun);
+      }
+      if(announce)message('Pausa salva. Você pode continuar em outro dispositivo.');
+    }catch(error){
+      if(announce)message(error.status===409?error.message:'Pausa salva neste navegador. Sincronize para continuar em outro dispositivo.');
+    }finally{
+      syncingPause=false;
+      if(announce)showState();
+    }
   }
 
   function clearRun() {
@@ -204,6 +262,24 @@ export function bootPilot({canvas,ctx,world}) {
       input.parentElement.querySelector('output').value=input.value;
     }
     writeLocal(draftKey,{preset,setup});
+  }
+  function showPilotSelector() {
+    const select=loginForm.elements.pilot;
+    const selected=select.value;
+    select.replaceChildren(new Option('Usar meu login',''),...(state.pilots??[]).map(pilot=>{
+      const option=new Option(pilot.canLogin?pilot.name:`${pilot.name} · senha ainda não cadastrada`,pilot.name);
+      option.disabled=!pilot.canLogin;
+      return option;
+    }));
+    if([...select.options].some(option=>option.value===selected&&!option.disabled))select.value=selected;
+    select.dispatchEvent(new Event('change'));
+  }
+  function showSavedSetups() {
+    const selected=savedSetupSelect.value;
+    const options=(state.savedSetups??[]).map(({name})=>new Option(name,name));
+    savedSetupSelect.replaceChildren(new Option(options.length?'Selecione um acerto':'Nenhuma configuração salva',''),...options);
+    if(options.some(option=>option.value===selected))savedSetupSelect.value=selected;
+    $('#pilot-load-setup').disabled=!savedSetupSelect.value;
   }
   function drawPreview() {
     const paint=liveryDraft ?? state?.driver?.livery ?? form.elements.color.value;
@@ -267,7 +343,21 @@ export function bootPilot({canvas,ctx,world}) {
     $('#pilot-best').textContent=format(best);
     const lastLap=state.history?.findLast(lap=>lap.ms!=null);
     $('#pilot-last').textContent=lastLap?.ms==null?'—':format(lastLap.ms)+(!lastLap.valid?' · inválida':'');
-    form.hidden=!!driver || !open || race;
+    const canRegister=open&&!race;
+    if(!canRegister)accountMode='login';
+    $('.pilot-account-menu').hidden=!!driver;
+    for(const button of ui.querySelectorAll('[data-account]')){
+      button.hidden=button.dataset.account==='register'&&!canRegister;
+      button.setAttribute('aria-pressed',String(button.dataset.account===accountMode));
+    }
+    form.hidden=!!driver||accountMode!=='register';
+    loginForm.hidden=!!driver||accountMode!=='login';
+    if(!driver)showPilotSelector();
+    $('#pilot-credentials').hidden=!driver||!!driver.login;
+    $('#pilot-account-info').hidden=!driver?.login;
+    $('#pilot-account-info p').textContent=driver?.login?`Carro de ${driver.name} · Login: ${driver.login}`:'';
+    $('#pilot-saved-setups').hidden=!driver;
+    showSavedSetups();
     paintForm.hidden=!driver;
     if(driver&&!liveryDirty){
       liveryDraft=driver.livery;
@@ -290,7 +380,7 @@ export function bootPilot({canvas,ctx,world}) {
     $('.pilot-start-options').dataset.phase=phase ?? '';
     const resume=$('#pilot-resume');
     resume.hidden=!resumable;
-    resume.disabled=!!(pending.length||runQueue(savedRun).length);
+    resume.disabled=!!(pending.length||runQueue(savedRun).length||syncingPause);
     resume.textContent=race?'Continuar Race':'Continuar Qualy';
     const warmupButton=$('#pilot-warmup');
     warmupButton.hidden=!canWarmup();
@@ -300,7 +390,8 @@ export function bootPilot({canvas,ctx,world}) {
       button.hidden=resumable||(button.dataset.pilotStart==='grid')!==race;
       button.disabled=!canStart||!!pending.length;
     }
-    if(!driver&&race)message('As inscrições encerraram. Pilotos inscritos podem entrar pelo navegador usado na inscrição.');
+    $('#pilot-sync-pause').hidden=!resumable||!savedRun?.paused||savedRun.cloudSynced;
+    $('#pilot-sync-pause').disabled=syncingPause||!!pending.length;
     const laps=pilotLapRows(state.history);
     const top=$('#pilot-top-laps'), fastest=fastestLaps(laps);
     top.hidden=!fastest.length;
@@ -316,10 +407,20 @@ export function bootPilot({canvas,ctx,world}) {
   async function refresh() {
     try {
       state=await getState();
-      if(!car&&(pending.length||matchesRun(savedRun)&&runQueue(savedRun).length))await retryLap();
+      if(!initialized){
+        loadPending(true);
+        initialized=true;
+      }
+      if(state.driver&&!car&&(pending.length||matchesRun(savedRun)&&runQueue(savedRun).length))await retryLap();
+      await restoreCheckpoint().catch(()=>{});
       showState();
     }
     catch(error) {message(error.message);$('#pilot-retry').hidden=false;}
+  }
+
+  function loadPending(allowLegacy=false) {
+    const stored=readLocal(pendingKey);
+    pending=!state.driver?[]:stored?.driver===state.driver.name?asQueue(stored.operations):allowLegacy?asQueue(stored):[];
   }
   function leave() {
     car=null; track.hidden=true; garage.hidden=false;
@@ -335,7 +436,7 @@ export function bootPilot({canvas,ctx,world}) {
       savedRun={...savedRun,operations:pending,operation:null};
       if(writeLocal(runKey,savedRun))return;
     }
-    writeLocal(pendingKey,pending.length?pending:null);
+    writeLocal(pendingKey,pending.length?{driver:state.driver.name,operations:pending}:null);
   }
 
   async function saveLap() {
@@ -374,7 +475,10 @@ export function bootPilot({canvas,ctx,world}) {
       message(error.status?error.message:'Conexão instável. O jogo vai reenviar as voltas salvas neste navegador.');
     } finally {
       saving=false;
-      if(!car&&!pending.length)unlockRun();
+      if(!car&&!pending.length){
+        unlockRun();
+        syncPausedRun();
+      }
     }
   }
   function submitLap(operation) {
@@ -394,22 +498,108 @@ export function bootPilot({canvas,ctx,world}) {
     }
     await saveLap();
   }
-  const params=new URLSearchParams(location.hash.slice(1));
-  form.elements.invite.value=params.get('convite') ?? '';
-  form.addEventListener('input',e=>{if(e.target.name==='color')drawPreview();});
-  form.addEventListener('submit',async e=>{
-    e.preventDefault();
-    if (busy) return;
-    busy=true;
-    form.querySelector('button').disabled=true;
+  form.elements.invite.value=invite??'';
+  $('.pilot-account-menu').onclick=e=>{
+    const mode=e.target.closest('[data-account]')?.dataset.account;
+    if(!mode||busy)return;
+    accountMode=mode;
     message('');
-    try {
-      state=await getState('/register',Object.fromEntries(new FormData(form)));
-      if(params.has('convite'))history.replaceState(null,'',location.pathname+location.search);
-      showState();
-    } catch(error) {message(error.message);}
-    finally {busy=false;form.querySelector('button').disabled=false;}
+    showState();
+  };
+  loginForm.elements.pilot.onchange=()=>{
+    const chosen=!!loginForm.elements.pilot.value, input=loginForm.elements.login;
+    $('#pilot-login-label').hidden=chosen;
+    input.disabled=chosen;
+  };
+  form.addEventListener('input',e=>{if(e.target.name==='color')drawPreview();});
+  function accountAction(button, action) {
+    return async e=>{
+      e.preventDefault();
+      if(busy||car||syncingPause)return;
+      busy=true;
+      button.disabled=true;
+      message('');
+      try{
+        await action();
+        showState();
+      }catch(error){message(error.message);}
+      finally{busy=false;button.disabled=false;}
+    };
+  }
+  form.onsubmit=accountAction(form.querySelector('button'),async()=>{
+    state=await getState('/register',Object.fromEntries(new FormData(form)));
+    if(invite){
+      inviteUrl.searchParams.delete('convite');
+      if(new URLSearchParams(inviteUrl.hash.slice(1)).has('convite'))inviteUrl.hash='';
+      history.replaceState(null,'',inviteUrl.pathname+inviteUrl.search+inviteUrl.hash);
+    }
+    form.reset();
   });
+  loginForm.onsubmit=accountAction(loginForm.querySelector('button'),async()=>{
+    state=await getState('/login',Object.fromEntries(new FormData(loginForm)));
+    loginForm.reset();
+    loadPending();
+    if(pending.length||matchesRun(savedRun)&&runQueue(savedRun).length)await retryLap();
+    await restoreCheckpoint().catch(()=>{});
+    message(`Você entrou no carro de ${state.driver.name}.`);
+  });
+  credentialsForm.onsubmit=accountAction(credentialsForm.querySelector('button'),async()=>{
+    state=await getState('/credentials',Object.fromEntries(new FormData(credentialsForm)));
+    credentialsForm.reset();
+    message('Login e senha cadastrados. Você já pode entrar em outro dispositivo.');
+    if(canResume(savedRun)&&!savedRun.cloudSynced){
+      savedRun={...savedRun,paused:true};
+      await syncPausedRun();
+    }
+  });
+  const logout=$('#pilot-logout');
+  logout.onclick=accountAction(logout,async()=>{
+    if(saving||pending.length||matchesRun(savedRun)&&runQueue(savedRun).length){
+      throw new Error('Aguarde a sincronização das voltas para sair.');
+    }
+    if(canResume(savedRun)&&!savedRun.cloudSynced){
+      if(!savedRun.paused)savedRun={...savedRun,paused:true};
+      await syncPausedRun(false);
+      if(!savedRun.cloudSynced)throw new Error('Sincronize a pausa antes de sair do carro.');
+    }
+    state=await getState('/logout',{});
+    liveryDraft=null;
+    liveryDirty=false;
+    pending=[];
+    cloudVersion=0;
+    accountMode='login';
+    setupForm.reset();
+    setupForm.querySelector('output').textContent='';
+    preset='balanced';
+    setup=setupFor(preset);
+    syncSetup();
+  });
+  savedSetupSelect.onchange=()=>{$('#pilot-load-setup').disabled=!savedSetupSelect.value;};
+  $('#pilot-load-setup').onclick=()=>{
+    const saved=state.savedSetups.find(entry=>entry.name===savedSetupSelect.value);
+    if(!saved||busy)return;
+    preset='manual';
+    setup={...saved.setup};
+    syncSetup();
+    setupForm.elements.name.value=saved.name;
+    setupForm.querySelector('output').textContent=`Configuração carregada: ${saved.name}.`;
+  };
+  setupForm.onsubmit=async e=>{
+    e.preventDefault();
+    if(busy||!state.driver)return;
+    const button=setupForm.querySelector('button'), output=setupForm.querySelector('output');
+    busy=true;
+    button.disabled=true;
+    try{
+      const name=setupForm.elements.name.value.trim();
+      state=await getState('/setup',{name,setup});
+      showState();
+      savedSetupSelect.value=name.normalize('NFKC').replace(/\s+/g,' ');
+      savedSetupSelect.dispatchEvent(new Event('change'));
+      output.textContent='Configuração salva no seu piloto.';
+    }catch(error){output.textContent=error.message;}
+    finally{busy=false;button.disabled=false;}
+  };
   paintForm.addEventListener('input',()=>{
     const data=Object.fromEntries(new FormData(paintForm));
     liveryDraft={...data,number:Number(data.number)||state.driver.livery.number};
@@ -442,7 +632,7 @@ export function bootPilot({canvas,ctx,world}) {
     preset='manual';setup[e.target.name]=Number(e.target.value);engineerNote.hidden=true;syncSetup();
   });
   async function startDriving(mode) {
-    if(busy||pending.length)return;
+    if(busy||pending.length||syncingPause)return;
     if(wantsSound)setSound(true);
     busy=true;
     message('');
@@ -450,6 +640,7 @@ export function bootPilot({canvas,ctx,world}) {
       if(!await lockRun()){message('Já há uma saída aberta em outra aba.');return;}
       savedRun=readLocal(runKey);
       state=await getState();
+      await restoreCheckpoint().catch(()=>{});
       warmup=readLocal(warmupKey)??warmup;
       showState();
       if(mode==='resume'){
@@ -491,6 +682,7 @@ export function bootPilot({canvas,ctx,world}) {
   }
   for(const button of ui.querySelectorAll('[data-pilot-start]'))button.onclick=()=>startDriving(button.dataset.pilotStart);
   $('#pilot-resume').onclick=()=>startDriving('resume');
+  $('#pilot-sync-pause').onclick=()=>syncPausedRun();
   $('#pilot-warmup').onclick=()=>startDriving('warmup');
   $('#pilot-replay-banner').onclick=async event=>{
     const button=event.currentTarget;
@@ -506,9 +698,10 @@ export function bootPilot({canvas,ctx,world}) {
   addEventListener('online',()=>{if(pending.length)saveLap();});
   function exitTrack() {
     if(timed(drivingPhase)){
-      if(!checkpoint()){radio('Não foi possível salvar a pausa neste navegador.');return;}
+      if(!checkpoint(true)){radio('Não foi possível salvar a pausa neste navegador.');return;}
       leave();
-      message('Sessão pausada. Você pode continuar até o horário de encerramento.');
+      message('Sessão pausada. Sincronizando para outros dispositivos…');
+      syncPausedRun();
       return;
     }
     leave();
@@ -527,7 +720,7 @@ export function bootPilot({canvas,ctx,world}) {
   });
   addEventListener('keyup',e=>keys.delete(drivingKey(e.key)));
   addEventListener('blur',()=>{keys.clear();touches.clear();});
-  addEventListener('pagehide',()=>{if(car)checkpoint();});
+  addEventListener('pagehide',()=>{if(car&&checkpoint(true))syncPausedRun(false);});
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden&&car&&timed(drivingPhase))exitTrack();
   });
@@ -594,23 +787,21 @@ export function bootPilot({canvas,ctx,world}) {
             latest=lap;
             const nextId=state.limit==null||usedLaps()<state.limit?crypto.randomUUID():null;
             let replay;
-            if(timed(drivingPhase)){
-              if(replayFrames[0]?.[0]===0){
-                replay=replayFrames;
-                if(replay.at(-1)[0]===lap.ms)replay.pop();
-                replay.push(replayPoint(car,lap.ms,10000));
-              }
-              replayFrames=[replayPoint(car,0,0)];
+            if(replayFrames[0]?.[0]===0&&(drivingPhase!=='practice'||lap.valid&&lap.ms<=(state.best??Infinity))){
+              replay=replayFrames;
+              if(replay.at(-1)[0]===lap.ms)replay.pop();
+              replay.push(replayPoint(car,lap.ms,10000));
             }
+            replayFrames=[replayPoint(car,0,0)];
             submitLap({...lap,id:attemptId,nextId,phase:drivingPhase,replay});
             if(!nextId){
               leave();
               message('Última volta concluída. Sincronizando os tempos…');
             }
           }else if(before===null&&car.start!==null){
-            if(timed(drivingPhase))replayFrames=[replayPoint(car,0,0)];
+            replayFrames=[replayPoint(car,0,0)];
             submitLap({start:true,id:crypto.randomUUID(),phase:drivingPhase,setup:runSetup});
-          }else if(timed(drivingPhase)&&car.start!==null&&replayFrames.length){
+          }else if(car.start!==null&&replayFrames.length){
             const ms=elapsed();
             if(ms-replayFrames.at(-1)[0]>=100){
               const start=car.gate-car.sector*length/8;
