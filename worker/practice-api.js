@@ -388,7 +388,7 @@ export async function practiceAPI(request,env,now=Date.now()) {
     return json(await state(db,round,{...driver,color:livery.accent,livery:stored},sessions,now));
   }
   if(url.pathname!=='/api/practice/lap')return problem('Rota inexistente.',404);
-  const {id,ms,valid,splits,nextId,phase,replay}=payload;
+  const {id,ms,splits,nextId,phase,replay}=payload;
   if(!lapId(id))return problem('Identificador de volta inválido.',400);
   if(!active||phase!==active.id)return problem('A janela dessa sessão encerrou. Consulte o cronograma do GP.',410);
   if(payload.start===true){
@@ -400,15 +400,15 @@ export async function practiceAPI(request,env,now=Date.now()) {
     return json({...await current(),attemptId:attempt.elapsed_ms===0?id:null});
   }
 
-  if(!Number.isInteger(ms)||ms<35000||ms>1800000||typeof valid!=='boolean')return problem('Tempo de volta inválido.',400);
+  if(!Number.isInteger(ms)||ms<35000||ms>1800000)return problem('Tempo de volta inválido.',400);
   if(nextId!=null&&(!lapId(nextId)||nextId===id))return problem('Próxima volta inválida.',400);
   if(splits!=null&&(!Array.isArray(splits)||splits.length!==3||!splits.every(Number.isSafeInteger)||splits[0]<=0||splits[1]<=splits[0]||splits[2]<=splits[1]||splits[2]!==ms))return problem('Parciais inválidas.',400);
   if(replay!=null&&!validReplay(replay,ms))return problem('Gravação de volta inválida.',400);
   let attempt=await findAttempt(db,roundId,driver.id,phase,id);
   if(!attempt)return problem('Essa tentativa não foi iniciada. Recarregue a página para começar outra volta.',409);
   if(attempt.elapsed_ms===0){
-    await db.prepare('UPDATE practice_laps SET elapsed_ms=?,valid=?,splits=?,next_lap_id=?,replay_json=? WHERE driver_id=? AND round_key=? AND phase=? AND lap_id=? AND elapsed_ms=0')
-      .bind(ms,Number(valid),splits?JSON.stringify(splits):null,nextId??null,replay?JSON.stringify(replay):null,driver.id,roundId,phase,id).run();
+    await db.prepare('UPDATE practice_laps SET elapsed_ms=?,valid=1,splits=?,next_lap_id=?,replay_json=? WHERE driver_id=? AND round_key=? AND phase=? AND lap_id=? AND elapsed_ms=0')
+      .bind(ms,splits?JSON.stringify(splits):null,nextId??null,replay?JSON.stringify(replay):null,driver.id,roundId,phase,id).run();
     attempt=await findAttempt(db,roundId,driver.id,phase,id);
   }
   const next=attempt.next_lap_id?await reserveAttempt(db,roundId,driver.id,active,attempt.next_lap_id,{

@@ -787,7 +787,7 @@ export function bootPilot({canvas,ctx,world}) {
             latest=lap;
             const nextId=state.limit==null||usedLaps()<state.limit?crypto.randomUUID():null;
             let replay;
-            if(replayFrames[0]?.[0]===0&&(drivingPhase!=='practice'||lap.valid&&lap.ms<=(state.best??Infinity))){
+            if(replayFrames[0]?.[0]===0&&(drivingPhase!=='practice'||lap.ms<=(state.best??Infinity))){
               replay=replayFrames;
               if(replay.at(-1)[0]===lap.ms)replay.pop();
               replay.push(replayPoint(car,lap.ms,10000));
@@ -837,14 +837,14 @@ export function bootPilot({canvas,ctx,world}) {
         $('#pilot-gear').textContent=car.v<.4&&!throttle?'N':revs.gear;
         for(const [i,output] of splitOutputs.entries()){
           const split=car.splits[i]??car.lastSplits[i];
-          const delta=split?.valid?split.delta:null;
-          const label=split&&!split.valid?'INV':sectorDelta(delta==null?null:delta/1000);
+          const delta=split?.delta??null;
+          const label=sectorDelta(delta==null?null:delta/1000);
           if(output.value!==label)output.value=label;
           output.dataset.trend=delta<0?'gain':delta>0?'loss':'';
         }
         $('.pilot-speed span').dataset.available=String(!car.pit&&drsZoneAt(car.s)>=0);
         $('.pilot-speed span').dataset.active=String(car.drs);
-        radio(red?'Aguarde o sinal verde.':green?'Largada liberada · mantenha W ou ↑ para acelerar.':car.pit?'Segure W para sair dos boxes.':car.spin>0?'Rodada · alivie os comandos para recuperar.':car.locked?'Rodas travadas · alivie o freio.':car.off?'Brita · aderência reduzida.':car.start===null?'Cruze a linha para começar o cronômetro.':car.missedTiming?'Volta inválida · ponto de cronometragem não cruzado.':car.invalid?'Volta inválida após reposicionamento.':latest?`Última volta ${format(latest.ms)}${latest.valid?'':' · inválida'}`:'Volta cronometrada em andamento.');
+        radio(red?'Aguarde o sinal verde.':green?'Largada liberada · mantenha W ou ↑ para acelerar.':car.pit?'Segure W para sair dos boxes.':car.spin>0?'Rodada · alivie os comandos para recuperar.':car.locked?'Rodas travadas · alivie o freio.':car.off?'Brita · aderência reduzida.':car.start===null?'Cruze a linha para começar o cronômetro.':latest?`Última volta ${format(latest.ms)}`:'Volta cronometrada em andamento.');
       }
     } else racingAudio.update();
     paint(car??idle);

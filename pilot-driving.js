@@ -36,7 +36,7 @@ export function makePilotCar(setup,color,bestSplits=null,startMode='pits',gridPo
   return {...pose, s, pit:!onTrack, v:flying?22:0, steer:0, slip:0, drs:false, off:false,
     team:{color:paint.primary,secondary:paint.secondary,accent:paint.accent,pattern:paint.pattern}, compound:'medium', number:paint.number,
     model:deriveCar(base,'aurora',0), elapsed:0, startMode, progress:onTrack?s:0, sector:onTrack?8:0, gate:0,
-    start:null, invalid:false, safeS:s, bestSplits, splits:[], lastSplits:[], nextSplit:null,
+    start:null, safeS:s, bestSplits, splits:[], lastSplits:[], nextSplit:null,
     instability:0, spin:0, spinDirection:0, locked:false,
     gridRed:grid?GRID_RED_TICKS:0, gridAssist:grid?GRID_ASSIST_TICKS:0};
 }
@@ -61,16 +61,13 @@ function timeLap(car, delta) {
   if(car.start!==null) {
     const finish=splitAt(car,at,2);
     const fullSplits=car.splits.length===2&&car.splits.every(Boolean);
-    const valid=!car.invalid&&fullSplits;
-    car.lastSplits=[car.splits[0],car.splits[1],finish].map(s=>s?{...s,valid}:null);
-    lap={ms:finish.ms,valid,splits:fullSplits?[...car.splits.map(s=>s.ms),finish.ms]:null};
-    if(lap.valid&&(!car.bestSplits||lap.ms<car.bestSplits[2]))car.bestSplits=lap.splits;
+    car.lastSplits=[car.splits[0],car.splits[1],finish];
+    lap={ms:finish.ms,valid:true,splits:fullSplits?[...car.splits.map(s=>s.ms),finish.ms]:null};
+    if(lap.splits&&(!car.bestSplits||lap.ms<car.bestSplits[2]))car.bestSplits=lap.splits;
   }
   car.start=at;
   car.splits=[];
   car.nextSplit=car.gate+length/3;
-  car.invalid=false;
-  car.missedTiming=false;
   car.sector=1;
   car.gate+=gateSpacing;
   return lap;
@@ -80,7 +77,6 @@ function rejoinTiming(car,delta) {
   car.progress+=delta;
   if(car.progress>=car.gate||(car.nextSplit!==null&&car.splits.length<2&&car.progress>=car.nextSplit)){
     // A corrected position grants no crossing. Only the next physical movement can trigger a timing gate.
-    if(car.start!==null)car.invalid=car.missedTiming=true;
     while(car.start!==null&&car.nextSplit!==null&&car.splits.length<2&&car.progress>=car.nextSplit){
       car.splits.push(null);
       car.nextSplit+=length/3;
@@ -95,12 +91,13 @@ function rejoinTiming(car,delta) {
 function splitAt(car,time,index=car.splits.length) {
   const ms=Math.round((time-car.start)*1000);
   const reference=car.bestSplits?.[index]??null;
-  return {ms,delta:reference===null?null:ms-reference,valid:!car.invalid};
+  return {ms,delta:reference===null?null:ms-reference,valid:true};
 }
 
 export function recoverPilot(car) {
+  rejoinTiming(car,trackDelta(car.s,car.safeS));
   Object.assign(car,at(car.safeS),{s:car.safeS,v:0,slip:0,steer:0,
-    invalid:true,off:false,instability:0,spin:0,locked:false});
+    off:false,instability:0,spin:0,locked:false});
 }
 
 export function stepPilot(car, keys) {

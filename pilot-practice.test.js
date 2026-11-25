@@ -68,7 +68,7 @@ test('legacy drivers can claim their car, carry named setups and a paused Qualy 
   const practiceFrames=[[0,100,350,0,0],[63000,101,353,0,10000]];
   for(const [id,ms] of [[slowerPractice,66000],[bestPractice,63000]]){
     assert.equal((await send('/lap',{id,start:true,setup:validSetup},oldBrowser,practice)).status,200);
-    assert.equal((await send('/lap',{id,ms,valid:true,replay:[practiceFrames[0],[ms,101,353,0,10000]]},oldBrowser,practice)).status,200);
+    assert.equal((await send('/lap',{id,ms,valid:false,replay:[practiceFrames[0],[ms,101,353,0,10000]]},oldBrowser,practice)).status,200);
   }
   const leader=(await (await send('/telemetry',null,spectator,practice)).json()).sessions[0].entries[0];
   assert.equal(leader.best.replayId,bestPractice);
@@ -208,11 +208,12 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   const qualified=await stint(cookie,'qualifying',qualStart,[
     {ms:68000,splits:[19000,44000,68000],valid:true},
     {ms:61000,splits:[21000,43000,61000],valid:true,replay:qualifyReplay},
-    {ms:45000,splits:[15000,30000,45000],valid:false},
+    {ms:69000,splits:[24000,46000,69000],valid:false},
     67000, 66000, 64000
   ]);
   assert.equal(qualified.used,6);
   assert.equal(qualified.best,61000);
+  assert.equal(qualified.history[2].valid,true);
   await stint(secondCookie,'qualifying',qualStart,[65000,62000,65000,66000,64000,63000]);
   const comparisons=(await (await send('/telemetry',null,secondCookie,qualStart)).json()).sessions[1].entries;
   const first=comparisons.find(e=>!e.me);
@@ -249,7 +250,8 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   assert.equal(race.sessions[1].board[0].best,61000);
   assert.equal((await send('/register',{name:'Novo piloto',invite:'test-only'},undefined,raceStart)).status,410);
   const replay=Array.from({length:601},(_,i)=>[i*100,100+i,200,0,Math.round(i/600*10000)]);
-  await stint(cookie,'race',raceStart,Array(6).fill({ms:60000,valid:true,replay}));
+  const finishedRace=await stint(cookie,'race',raceStart,Array(6).fill({ms:60000,valid:false,replay}));
+  assert.ok(finishedRace.history.every(lap=>lap.valid));
   await stint(secondCookie,'race',raceStart,Array(6).fill(59900));
   assert.equal((await (await send('',null,cookie,raceEnd-1)).json()).sessions[2].board,undefined);
   for(const now of [raceStart,raceEnd-1]){
@@ -383,7 +385,7 @@ test('broadcast detects a sustained pass, timing gaps and valid lap records',()=
   assert.deepEqual(events.filter(event=>event.kind==='finish').map(event=>event.time),[110000,114000]);
 });
 
-test('gravel slows the car without teleporting it or invalidating the lap',()=>{
+test('gravel slows the car without teleporting it',()=>{
   const car=makePilotCar(setupFor('balanced'),'#ffffff',null,'flying');
   Object.assign(car,at(car.s,ROAD*.72),{v:30});
   stepPilot(car,{});
@@ -391,13 +393,11 @@ test('gravel slows the car without teleporting it or invalidating the lap',()=>{
   const speed=car.v;
   stepPilot(car,{});
   assert.ok(car.v<speed);
-  assert.equal(car.invalid,false);
   const progress=car.progress;
   Object.assign(car,at(car.s,ROAD*1.6));
   const position={x:car.x,y:car.y};
   stepPilot(car,{});
   assert.equal(car.progress,progress);
-  assert.equal(car.invalid,false);
   assert.equal(car.off,true);
   const distance=Math.hypot(car.x-position.x,car.y-position.y);
   assert.ok(distance>0&&distance<20);
@@ -406,9 +406,6 @@ test('gravel slows the car without teleporting it or invalidating the lap',()=>{
   Object.assign(car,at(car.s+70),{v:30});
   stepPilot(car,{});
   assert.ok(car.progress>progress+65);
-  assert.equal(car.invalid,false);
-  recoverPilot(car);
-  assert.equal(car.invalid,true);
 });
 
 test('timing reconnects on asphalt and clocks the real S1 and finish crossings',()=>{
@@ -420,10 +417,12 @@ test('timing reconnects on asphalt and clocks the real S1 and finish crossings',
   assert.ok(car.progress>split);
   assert.equal(car.splits.length,1);
   assert.ok(Math.abs(car.splits[0].ms-20000)<600);
-  assert.equal(car.invalid,false);
 
-  Object.assign(car,at(-8),{s:length-110,progress:length-110,gate:length,sector:8,
-    elapsed:63,v:26,nextSplit:length,splits:[car.splits[0],{ms:41000}]});
+  Object.assign(car,at(-110),{s:length-110,progress:length-110,gate:length,sector:8,
+    elapsed:63,v:26,nextSplit:length,safeS:length-115,splits:[car.splits[0],{ms:41000}]});
+  recoverPilot(car);
+  assert.ok(Math.abs(car.progress-(length-115))<.001);
+  Object.assign(car,at(-8),{v:26});
   let lap;
   for(let i=0;i<35;i++)lap=stepPilot(car,{w:true})??lap;
   assert.equal(lap.valid,true);
@@ -439,8 +438,6 @@ test('rejoining beyond a timing line does not fabricate its crossing',()=>{
     start:1,elapsed:21,v:26,nextSplit:split});
   stepPilot(car,{w:true});
   assert.ok(car.progress>split);
-  assert.equal(car.invalid,true);
-  assert.equal(car.missedTiming,true);
   assert.equal(car.splits[0],null);
   assert.equal(car.nextSplit,length*2/3);
 
@@ -448,6 +445,12 @@ test('rejoining beyond a timing line does not fabricate its crossing',()=>{
   assert.equal(stepPilot(car,{w:true}),null);
   assert.equal(car.gate,length+length/8);
   assert.equal(car.start,1);
+
+  Object.assign(car,at(-8),{s:length-8,progress:2*length-8,gate:2*length,sector:8,elapsed:126,v:26});
+  let lap;
+  for(let i=0;i<35;i++)lap=stepPilot(car,{w:true})??lap;
+  assert.equal(lap.valid,true);
+  assert.equal(lap.splits,null);
 });
 
 test('heavy braking while turning can spin the car; straight braking stays controllable',()=>{
