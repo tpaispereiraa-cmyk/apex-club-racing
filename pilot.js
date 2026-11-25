@@ -844,7 +844,7 @@ export function bootPilot({canvas,ctx,world}) {
         }
         $('.pilot-speed span').dataset.available=String(!car.pit&&drsZoneAt(car.s)>=0);
         $('.pilot-speed span').dataset.active=String(car.drs);
-        radio(red?'Aguarde o sinal verde.':green?'Largada liberada · mantenha W ou ↑ para acelerar.':car.pit?'Segure W para sair dos boxes.':car.spin>0?'Rodada · alivie os comandos para recuperar.':car.locked?'Rodas travadas · alivie o freio.':car.off?'Brita · aderência reduzida.':car.start===null?'Cruze a linha para começar o cronômetro.':car.invalid?'Volta inválida após reposicionamento.':latest?`Última volta ${format(latest.ms)}${latest.valid?'':' · inválida'}`:'Volta cronometrada em andamento.');
+        radio(red?'Aguarde o sinal verde.':green?'Largada liberada · mantenha W ou ↑ para acelerar.':car.pit?'Segure W para sair dos boxes.':car.spin>0?'Rodada · alivie os comandos para recuperar.':car.locked?'Rodas travadas · alivie o freio.':car.off?'Brita · aderência reduzida.':car.start===null?'Cruze a linha para começar o cronômetro.':car.missedTiming?'Volta inválida · ponto de cronometragem não cruzado.':car.invalid?'Volta inválida após reposicionamento.':latest?`Última volta ${format(latest.ms)}${latest.valid?'':' · inválida'}`:'Volta cronometrada em andamento.');
       }
     } else racingAudio.update();
     paint(car??idle);

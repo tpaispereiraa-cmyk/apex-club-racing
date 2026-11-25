@@ -21,6 +21,8 @@ export const PILOT_STEP = fixedStep;
 export const GRID_RED_TICKS = 180;
 export const GRID_ASSIST_TICKS = 72;
 const base = createCareer('aurora','APEX Practice');
+const gateSpacing = length/8;
+const trackDelta = (from,to) => mod(to-from+length/2,length)-length/2;
 
 export function makePilotCar(setup,color,bestSplits=null,startMode='pits',gridPosition=1) {
   base.teams.aurora.cars[0].setup = {...defaultSetup(),...setup};
@@ -44,7 +46,7 @@ function timeLap(car, delta) {
   car.progress += delta;
   if (delta <= 0) return null;
   const crossing = gate => car.elapsed-fixedStep*clamp((car.progress-gate)/Math.max(.001,car.progress-before),0,1);
-  if (car.start!==null && car.splits.length<2 && car.progress>=car.nextSplit) {
+  if (car.start!==null && car.nextSplit!==null && car.splits.length<2 && car.progress>=car.nextSplit) {
     car.splits.push(splitAt(car,crossing(car.nextSplit)));
     car.nextSplit+=length/3;
   }
@@ -52,28 +54,47 @@ function timeLap(car, delta) {
   const at = crossing(car.gate);
   if (car.sector < 8) {
     car.sector++;
-    car.gate += length/8;
+    car.gate += gateSpacing;
     return null;
   }
   let lap=null;
   if(car.start!==null) {
-    car.splits.push(splitAt(car,at));
-    car.lastSplits=car.splits.map(s=>({...s,valid:!car.invalid}));
-    lap={ms:car.splits[2].ms,valid:!car.invalid,splits:car.splits.map(s=>s.ms)};
+    const finish=splitAt(car,at,2);
+    const fullSplits=car.splits.length===2&&car.splits.every(Boolean);
+    const valid=!car.invalid&&fullSplits;
+    car.lastSplits=[car.splits[0],car.splits[1],finish].map(s=>s?{...s,valid}:null);
+    lap={ms:finish.ms,valid,splits:fullSplits?[...car.splits.map(s=>s.ms),finish.ms]:null};
     if(lap.valid&&(!car.bestSplits||lap.ms<car.bestSplits[2]))car.bestSplits=lap.splits;
   }
   car.start=at;
   car.splits=[];
   car.nextSplit=car.gate+length/3;
   car.invalid=false;
+  car.missedTiming=false;
   car.sector=1;
-  car.gate+=length/8;
+  car.gate+=gateSpacing;
   return lap;
 }
 
-function splitAt(car,time) {
+function rejoinTiming(car,delta) {
+  car.progress+=delta;
+  if(car.progress>=car.gate||(car.nextSplit!==null&&car.splits.length<2&&car.progress>=car.nextSplit)){
+    // A corrected position grants no crossing. Only the next physical movement can trigger a timing gate.
+    if(car.start!==null)car.invalid=car.missedTiming=true;
+    while(car.start!==null&&car.nextSplit!==null&&car.splits.length<2&&car.progress>=car.nextSplit){
+      car.splits.push(null);
+      car.nextSplit+=length/3;
+    }
+    while(car.progress>=car.gate){
+      car.sector=car.sector%8+1;
+      car.gate+=gateSpacing;
+    }
+  }
+}
+
+function splitAt(car,time,index=car.splits.length) {
   const ms=Math.round((time-car.start)*1000);
-  const reference=car.bestSplits?.[car.splits.length]??null;
+  const reference=car.bestSplits?.[index]??null;
   return {ms,delta:reference===null?null:ms-reference,valid:!car.invalid};
 }
 
@@ -142,13 +163,21 @@ export function stepPilot(car, keys) {
   car.slip += (slipTarget-car.slip)*fixedStep*(5.5+model.clA*.6);
   car.v *= 1-Math.abs(car.steer)*fixedStep*(.11+Math.abs(car.slip)*.46);
   const movement = units.toWorld(car.v)*fixedStep;
+  const {x,y}=car;
   car.x += Math.cos(car.angle+car.slip)*movement;
   car.y += Math.sin(car.angle+car.slip)*movement;
   const p = nearest(car.x,car.y);
   car.off = p.d>ROAD*.5;
-  const delta = mod(p.s-car.s+length/2,length)-length/2;
-  // Keep the car moving even when its position cannot advance the timing gates.
-  if (p.d>ROAD*1.45 || Math.abs(delta)>Math.max(20,movement*2.15)) return null;
+  const maxDelta=Math.max(20,movement*2.15);
+  let delta=trackDelta(car.s,p.s);
+  if(p.d>ROAD*1.45)return null;
+  if(Math.abs(delta)>maxDelta){
+    if(car.off||Math.abs(Math.cos(car.angle+car.slip-p.angle))<.5)return null;
+    const previous=nearest(x,y);
+    delta=trackDelta(previous.s,p.s);
+    if(previous.d>ROAD*1.45||Math.abs(delta)>maxDelta)return null;
+    rejoinTiming(car,trackDelta(car.s,previous.s));
+  }
   car.s=p.s;
   if (!car.off && delta>=0) car.safeS=car.s;
   return timeLap(car,delta);

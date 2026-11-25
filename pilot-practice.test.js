@@ -6,7 +6,7 @@ import {practiceAPI} from './worker/practice-api.js';
 import {hash} from './worker/pilot-credentials.js';
 import {GRID_ASSIST_TICKS,GRID_RED_TICKS,makePilotCar,recoverPilot,setupFor,stepPilot} from './pilot-driving.js';
 import {proposePilotSetup} from './pilot-engineer.js';
-import {at,ROAD} from './track.js';
+import {at,length,ROAD} from './track.js';
 import {engineRevs} from './racing-audio.js';
 import {fastestLaps,lapHistoryTable,pilotLapRows} from './lap-history.js';
 import {broadcastEvents,interpolateReplay,replayGap,replayPosition,timingReference} from './pilot-replay-timing.js';
@@ -403,17 +403,51 @@ test('gravel slows the car without teleporting it or invalidating the lap',()=>{
   assert.ok(distance>0&&distance<20);
   assert.ok(car.v>0);
 
-  Object.assign(car,at(car.s+200),{v:30});
+  Object.assign(car,at(car.s+70),{v:30});
   stepPilot(car,{});
-  assert.equal(car.progress,progress);
+  assert.ok(car.progress>progress+65);
   assert.equal(car.invalid,false);
-  assert.ok(car.v>0);
-
-  Object.assign(car,at(car.s),{v:30});
-  stepPilot(car,{});
-  assert.ok(car.progress>progress);
   recoverPilot(car);
   assert.equal(car.invalid,true);
+});
+
+test('timing reconnects on asphalt and clocks the real S1 and finish crossings',()=>{
+  const car=makePilotCar(setupFor('balanced'),'#ffffff',null,'flying');
+  const split=length/3;
+  Object.assign(car,at(split-8),{s:split-110,progress:split-110,gate:length*3/8,sector:3,
+    start:1,elapsed:21,v:26,nextSplit:split});
+  for(let i=0;i<22;i++)stepPilot(car,{w:true});
+  assert.ok(car.progress>split);
+  assert.equal(car.splits.length,1);
+  assert.ok(Math.abs(car.splits[0].ms-20000)<600);
+  assert.equal(car.invalid,false);
+
+  Object.assign(car,at(-8),{s:length-110,progress:length-110,gate:length,sector:8,
+    elapsed:63,v:26,nextSplit:length,splits:[car.splits[0],{ms:41000}]});
+  let lap;
+  for(let i=0;i<35;i++)lap=stepPilot(car,{w:true})??lap;
+  assert.equal(lap.valid,true);
+  assert.ok(Math.abs(lap.ms-62000)<600);
+  assert.equal(lap.splits.at(-1),lap.ms);
+  assert.ok(car.elapsed-car.start<1);
+});
+
+test('rejoining beyond a timing line does not fabricate its crossing',()=>{
+  const car=makePilotCar(setupFor('balanced'),'#ffffff',null,'flying');
+  const split=length/3;
+  Object.assign(car,at(split+8),{s:split-110,progress:split-110,gate:length*3/8,sector:3,
+    start:1,elapsed:21,v:26,nextSplit:split});
+  stepPilot(car,{w:true});
+  assert.ok(car.progress>split);
+  assert.equal(car.invalid,true);
+  assert.equal(car.missedTiming,true);
+  assert.equal(car.splits[0],null);
+  assert.equal(car.nextSplit,length*2/3);
+
+  Object.assign(car,at(8),{s:length-110,progress:length-110,gate:length,sector:8,elapsed:63,v:26});
+  assert.equal(stepPilot(car,{w:true}),null);
+  assert.equal(car.gate,length+length/8);
+  assert.equal(car.start,1);
 });
 
 test('heavy braking while turning can spin the car; straight braking stays controllable',()=>{
