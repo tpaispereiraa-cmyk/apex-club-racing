@@ -153,7 +153,7 @@ async function openReplay(ui,world,getState,format,lap) {
           const name=document.createElement('b'), label=document.createElement('small');
           name.textContent=driver.name;
           name.style.borderColor=driver.livery.accent;
-          label.textContent=lap?format(driver.official):{waiting:`Grid P${driver.grid} · +${driver.delay/1000}s`,
+          label.textContent=lap?format(driver.official):{waiting:`Grid P${driver.grid} · +${(driver.delay/1000).toLocaleString('pt-BR')} s`,
             driving:`Volta ${Math.floor(driver.progress)+1}/${limit}`,finished:format(driver.official),
             missing:'Volta sem gravação',dnf:`Abandono · ${driver.completed}/${limit}`}[driver.status];
           item.append(name,label);

@@ -1,7 +1,7 @@
 const EVENT = 'interlagos-2026-11-21';
 const ROUND = '2026-11-22-weekend';
 const DAY = 86_400_000;
-const GRID_STEP = 2000;
+const GRID_STEP = 1300;
 const COOKIE = 'apex_practice';
 const PHASES = [
   ['practice','Treino livre',null,null,'2026-11-24T15:00:00.000Z'],
@@ -99,13 +99,22 @@ async function reserveAttempt(db,driverId,{id:phase,limit},id,{first=false,setup
 }
 
 async function standings(db,phase) {
-  const {results}=await db.prepare(`SELECT d.id, d.name, d.color, count(l.lap_id) AS used,
+  const {results}=await db.prepare(`SELECT d.id, d.name, d.color, d.livery, count(l.lap_id) AS used,
     min(CASE WHEN l.valid=1 THEN l.elapsed_ms END) AS best,
     count(CASE WHEN l.elapsed_ms>0 THEN 1 END) AS completed,
+    count(CASE WHEN l.elapsed_ms>0 AND l.replay_json IS NOT NULL THEN 1 END) AS recorded,
     sum(CASE WHEN l.elapsed_ms>0 THEN l.elapsed_ms END) AS total
     FROM practice_drivers d LEFT JOIN practice_laps l ON l.driver_id=d.id AND l.round_key=? AND l.phase=?
     WHERE d.event_id=? GROUP BY d.id ORDER BY best IS NULL,best,d.name_key`).bind(ROUND,phase,EVENT).all();
   return results;
+}
+
+async function raceGrid(db,qualifying,limit) {
+  const started=new Map((await standings(db,'race')).filter(row=>row.used>0).map(row=>[row.id,row]));
+  return qualifying.filter(row=>started.has(row.id)).map(({id},index)=>{
+    const driver=started.get(id), delay=index*GRID_STEP;
+    return {...driver,grid:index+1,delay,official:driver.completed===limit?driver.total+delay:null};
+  });
 }
 
 function validReplay(frames,ms) {
@@ -122,7 +131,7 @@ function validReplay(frames,ms) {
 }
 
 async function raceReplay(db,race,gridPosition) {
-  const grid=await standings(db,'qualifying');
+  const grid=await raceGrid(db,await standings(db,'qualifying'),race.limit);
   if(gridPosition!==null){
     const entry=grid[Number(gridPosition)-1];
     if(!/^[1-9][0-9]*$/.test(gridPosition)||!entry)return problem('Piloto indisponível no replay.',404);
@@ -131,23 +140,8 @@ async function raceReplay(db,race,gridPosition) {
       .bind(entry.id,ROUND).all();
     return json({laps});
   }
-  const {results}=await db.prepare(`SELECT l.driver_id,d.name,d.color,d.livery,l.elapsed_ms AS ms,
-    l.replay_json IS NOT NULL AS recorded
-    FROM practice_laps l JOIN practice_drivers d ON d.id=l.driver_id
-    WHERE d.event_id=? AND l.round_key=? AND l.phase='race' ORDER BY l.rowid`).bind(EVENT,ROUND).all();
-  const participants=new Map();
-  for(const lap of results){
-    if(!participants.has(lap.driver_id))participants.set(lap.driver_id,{name:lap.name,livery:liveryOf(lap),laps:[]});
-    if(lap.ms>0)participants.get(lap.driver_id).laps.push(lap);
-  }
-  const drivers=grid.flatMap(({id},i)=>{
-    const entry=participants.get(id);
-    if(!entry)return [];
-    const delay=i*GRID_STEP, completed=entry.laps.length;
-    const official=completed===race.limit?entry.laps.reduce((total,lap)=>total+lap.ms,delay):null;
-    return [{name:entry.name,livery:entry.livery,grid:i+1,delay,completed,official,
-      recorded:entry.laps.filter(lap=>lap.recorded).length}];
-  });
+  const drivers=grid.map(driver=>({name:driver.name,livery:liveryOf(driver),grid:driver.grid,delay:driver.delay,
+    completed:driver.completed,official:driver.official,recorded:driver.recorded}));
   return json({limit:race.limit,drivers});
 }
 
@@ -166,22 +160,24 @@ async function state(db,driver,sessions,now) {
   const activeLaps=byPhase[active?.id??'race'], best=bestOf(activeLaps);
   const historyRows=laps=>laps.map(({ms,valid,splits})=>({ms:ms||null,valid:!!valid,splits:splits?JSON.parse(splits):null}));
   const qualifyRows=sessions[1].status==='closed'?await standings(db,'qualifying'):null;
-  const gridPos=qualifyRows?.findIndex(d=>d.id===driver.id);
+  const finalGrid=replayReady?await raceGrid(db,qualifyRows,race.limit):null;
+  const finalByDriver=finalGrid&&new Map(finalGrid.map(row=>[row.id,row]));
+  const gridPos=(finalGrid??qualifyRows)?.findIndex(d=>d.id===driver.id);
   const grid=Number.isInteger(gridPos)&&gridPos>=0?{position:gridPos+1,delay:gridPos*GRID_STEP}:null;
   const locked=byPhase.qualifying.find(l=>l.setup_json);
-  const toPublic=({id,...r})=>r;
+  const toPublic=({id,livery,recorded,...r})=>r;
   const reports=[];
   for(const session of sessions){
     const report={...session,history:historyRows(byPhase[session.id])};
     if(session.status==='closed'){
       if(session.id==='practice')report.board=(await standings(db,'practice')).filter(r=>r.used).map(toPublic);
-      if(session.id==='qualifying')report.board=qualifyRows.map((r,i)=>({...toPublic(r),position:i+1,delay:i*GRID_STEP}));
+      if(session.id==='qualifying')report.board=qualifyRows.map((r,i)=>{
+        const starter=finalByDriver?.get(r.id);
+        return {...toPublic(r),position:i+1,grid:finalGrid?starter?.grid??null:i+1,delay:finalGrid?starter?.delay??null:i*GRID_STEP};
+      });
       if(session.id==='race'&&replayReady){
-        const positions=new Map(qualifyRows.map((r,i)=>[r.id,i]));
-        report.board=(await standings(db,'race')).map(r=>{
-          const i=positions.get(r.id), delay=i*GRID_STEP;
-          return {...toPublic(r),grid:i+1,delay,official:r.completed===session.limit?r.total+delay:null};
-        }).sort((a,b)=>(a.official??Infinity)-(b.official??Infinity)||b.completed-a.completed||a.grid-b.grid);
+        report.board=finalGrid.map(toPublic)
+          .sort((a,b)=>(a.official??Infinity)-(b.official??Infinity)||b.completed-a.completed||a.grid-b.grid);
       }
     }
     reports.push(report);

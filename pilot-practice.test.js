@@ -152,6 +152,10 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   assert.deepEqual(JSON.parse(recordedQualy.frames),qualifyReplay);
   assert.equal((await send(qualifyPath,null,undefined,qualStart)).status,401);
   assert.equal((await send('/qualifying-replay?lap=missing',null,cookie,qualStart)).status,404);
+  const noShow=await send('/register',{name:'Só classificou',invite:'test-only'},undefined,qualStart);
+  assert.equal(noShow.status,201);
+  const noShowCookie=noShow.headers.get('Set-Cookie').split(';')[0];
+  await stint(noShowCookie,'qualifying',qualStart,Array(6).fill(61500));
   assert.equal((await (await send('',null,cookie,qualEnd-1)).json()).phase,'qualifying');
   for(const now of [qualEnd,raceStart-1]){
     const gap=await (await send('',null,cookie,now)).json();
@@ -163,7 +167,7 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   assert.equal(race.phase,'race');
   assert.equal(race.limit,6);
   assert.equal(race.replayAvailable,false);
-  assert.deepEqual(race.grid,{position:2,delay:2000});
+  assert.deepEqual(race.grid,{position:3,delay:2600});
   assert.equal(race.lockedSetup.rearWing,9);
   assert.equal(race.sessions[1].board[0].best,61000);
   assert.equal((await send('/register',{name:'Novo piloto',invite:'test-only'},undefined,raceStart)).status,410);
@@ -185,17 +189,25 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   assert.equal(final.phase,null);
   assert.equal(final.replayReady,true);
   assert.equal(final.replayAvailable,true);
-  assert.deepEqual(final.sessions[2].board.map(r=>[r.name,r.official]),[['Piloto Teste',360000],['Mais um',361400]]);
+  assert.deepEqual(final.sessions[1].board.map(r=>[r.name,r.position,r.grid]),[
+    ['Piloto Teste',1,1],['Só classificou',2,null],['Mais um',3,2]
+  ]);
+  assert.deepEqual(final.sessions[2].board.map(r=>[r.name,r.grid,r.official]),[['Piloto Teste',1,360000],['Mais um',2,360700]]);
+  const finalSecond=await (await send('',null,secondCookie,raceEnd)).json();
+  assert.deepEqual(finalSecond.grid,{position:2,delay:1300});
   assert.equal((await send('/lap',{phase:'race',start:true,id:crypto.randomUUID()},cookie,raceEnd)).status,410);
   assert.equal((await send('/replay',null,undefined,raceEnd)).status,401);
   const manifest=await (await send('/replay',null,cookie,raceEnd)).json();
   assert.deepEqual(manifest.drivers.map(d=>[d.name,d.delay,d.official,d.recorded]),[
-    ['Piloto Teste',0,360000,6],['Mais um',2000,361400,0]
+    ['Piloto Teste',0,360000,6],['Mais um',1300,360700,0]
   ]);
   const playback=await (await send('/replay?grid=1',null,cookie,raceEnd)).json();
   assert.equal(playback.laps.length,6);
   assert.equal(playback.laps[0].valid,1);
   assert.deepEqual(JSON.parse(playback.laps[0].frames),replay);
+  const playbackSecond=await (await send('/replay?grid=2',null,cookie,raceEnd)).json();
+  assert.equal(playbackSecond.laps[0].ms,59900);
+  assert.equal((await send('/replay?grid=3',null,cookie,raceEnd)).status,404);
   assert.equal((await send('/replay?grid=99',null,cookie,raceEnd)).status,404);
 });
 

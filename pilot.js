@@ -15,7 +15,7 @@ const patterns = {clean:'Clássica',stripe:'Listras',chevron:'Setas',checkers:'X
 const phases = {
   practice:{title:'Treino <em>livre.</em>',instructions:()=> 'Voltas ilimitadas para testar acertos e buscar seu melhor tempo até o fim da sessão.'},
   qualifying:{title:'Classifi<em>cação.</em>',instructions:limit=>`Uma saída com ${limit} voltas rápidas seguidas. A melhor define seu lugar no grid.`},
-  race:{title:'Dia de <em>corrida.</em>',instructions:limit=>`${limit} voltas rápidas, com pista seca, sem desgaste de pneus e com combustível constante. Cada posição atrás da pole soma 2 s ao tempo em pista.`}
+  race:{title:'Dia de <em>corrida.</em>',instructions:limit=>`${limit} voltas rápidas, com pista seca, sem desgaste de pneus e com combustível constante. Cada posição atrás da pole soma 1,3 s ao tempo em pista.`}
 };
 const draftKey = 'apex-practice-setup-v1';
 const pendingKey = 'apex-practice-pending-v1';
@@ -207,11 +207,11 @@ export function bootPilot({canvas,ctx,world}) {
     history.querySelector('h2').textContent=`Minhas voltas · ${report.name}`;
     history.querySelector('div').innerHTML=lapHistoryTable(laps,format);
     results.hidden=!report.board;
-    results.querySelector('h2').textContent=report.id==='qualifying'?'Grid de largada':report.id==='race'?'Resultado final da corrida':'Tempos do treino';
+    results.querySelector('h2').textContent=report.id==='qualifying'?'Resultado da classificação':report.id==='race'?'Resultado final da corrida':'Tempos do treino';
     results.querySelector('p').hidden=!!report.board?.length;
     results.querySelector('ol').replaceChildren(...(report.board??[]).map(entry=>{
       const item=document.createElement('li'), name=document.createElement('b'), time=document.createElement('span');
-      const offset=entry.delay===0?'pole':`+${entry.delay/1000} s no grid`;
+      const offset=entry.grid==null?'Não largou':entry.delay===0?'P1 no grid':`P${entry.grid} no grid · +${(entry.delay/1000).toLocaleString('pt-BR')} s`;
       name.textContent=entry.name;
       time.textContent=report.id==='race'
         ? entry.official==null?`${entry.used?'Abandono':'Sem largada'} · ${entry.completed}/${report.limit}`:`${format(entry.official)} · ${offset}`
@@ -267,7 +267,7 @@ export function bootPilot({canvas,ctx,world}) {
     if(phase!=='practice')engineerNote.hidden=true;
     const gridNote=$('#pilot-grid');
     gridNote.hidden=!race||!grid;
-    gridNote.textContent=grid?`P${grid.position} no grid · +${grid.delay/1000} s ao tempo final.${lockedSetup?' Acerto da classificação aplicado.':''}`:'';
+    gridNote.textContent=grid?`P${grid.position} no grid · +${(grid.delay/1000).toLocaleString('pt-BR')} s ao tempo final.${lockedSetup?' Acerto da classificação aplicado.':''}`:'';
     const finished=state.history?.filter(lap=>lap.ms!=null) ?? [];
     $('.pilot-start-note').textContent=canStart
       ? race?'Sua corrida é individual. O resultado geral sai no fim da janela.':'Na volta rápida, você começa antes da última curva. A tentativa conta ao cruzar a linha.'
