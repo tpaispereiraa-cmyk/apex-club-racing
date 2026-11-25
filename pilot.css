@@ -90,6 +90,9 @@
 .pilot-track-top div, .pilot-speed, #pilot-radio { background: #101e19ee; padding: .65rem .95rem; border: 1px solid #e1efdc45; }
 .pilot-track-top strong { display: block; font-size: 1.7rem; font-variant-numeric: tabular-nums; }
 #pilot-radio { position: absolute; top: 5.5rem; left: clamp(.75rem,4vw,3rem); margin: 0; font-size: .9rem; }
+#pilot-grid-signal { position: absolute; top: clamp(8rem,24vh,13rem); left: 50%; transform: translateX(-50%); display: flex; gap: .7rem; align-items: center; padding: .65rem 1rem; color: #fff; background: #101e19ed; border: 1px solid #d6e6dc64; font-variant-numeric: tabular-nums; white-space: nowrap; }
+#pilot-grid-signal i { width: 1.15rem; height: 1.15rem; border-radius: 50%; background: #ff515c; box-shadow: 0 0 1rem #ff515caa; }
+#pilot-grid-signal[data-light=green] i { background: #9af45b; box-shadow: 0 0 1rem #9af45baa; }
 .pilot-splits { position: absolute; top: 8.8rem; left: clamp(.75rem,4vw,3rem); padding: .65rem .85rem; background: #101e19ee; border: 1px solid #e1efdc45; font-variant-numeric: tabular-nums; }
 .pilot-splits > span { font-size: .75rem; color: #b9cbbd; }
 .pilot-splits > div { display: flex; gap: .85rem; margin-top: .3rem; }

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFileSync} from 'node:fs';
 import {practiceAPI} from './worker/practice-api.js';
-import {makePilotCar,recoverPilot,setupFor,stepPilot} from './pilot-driving.js';
+import {GRID_ASSIST_TICKS,GRID_RED_TICKS,makePilotCar,recoverPilot,setupFor,stepPilot} from './pilot-driving.js';
 import {proposePilotSetup} from './pilot-engineer.js';
 import {at,ROAD} from './track.js';
 import {engineRevs} from './racing-audio.js';
@@ -92,9 +92,9 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   delete env.PRACTICE_CLOSES_AT;
   const qualStart=Date.parse('2026-11-24T15:00:00Z');
   const qualEnd=Date.parse('2026-11-24T20:00:00Z');
-  const raceStart=Date.parse('2026-11-24T20:30:00Z');
-  const raceEnd=Date.parse('2026-11-25T02:59:59.999Z');
-  const replayAt=Date.parse('2026-11-25T03:01:00Z');
+  const raceStart=Date.parse('2026-11-25T12:00:00Z');
+  const raceEnd=Date.parse('2026-11-25T16:00:00Z');
+  const replayAt=Date.parse('2026-11-25T16:01:00Z');
   assert.equal((await (await send('',null,cookie,qualStart-1)).json()).phase,'practice');
   const afterPractice=await (await send('',null,cookie,qualStart)).json();
   assert.equal(afterPractice.phase,'qualifying');
@@ -162,13 +162,15 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   }
   const race=await (await send('',null,secondCookie,raceStart)).json();
   assert.equal(race.phase,'race');
+  assert.equal(race.limit,6);
+  assert.equal(race.replayAvailable,false);
   assert.deepEqual(race.grid,{position:2,delay:2000});
   assert.equal(race.lockedSetup.rearWing,9);
   assert.equal(race.sessions[1].board[0].best,61000);
   assert.equal((await send('/register',{name:'Novo piloto',invite:'test-only'},undefined,raceStart)).status,410);
   const replay=Array.from({length:601},(_,i)=>[i*100,100+i,200,0,Math.round(i/600*10000)]);
-  await stint(cookie,'race',raceStart,Array(10).fill({ms:60000,valid:true,replay}));
-  await stint(secondCookie,'race',raceStart,Array(10).fill(59900));
+  await stint(cookie,'race',raceStart,Array(6).fill({ms:60000,valid:true,replay}));
+  await stint(secondCookie,'race',raceStart,Array(6).fill(59900));
   assert.equal((await (await send('',null,cookie,raceEnd-1)).json()).sessions[2].board,undefined);
   for(const now of [raceEnd-1,raceEnd,replayAt-1]){
     const hidden=await (await send('',null,cookie,now)).json();
@@ -183,17 +185,34 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   const final=await (await send('',null,cookie,replayAt)).json();
   assert.equal(final.phase,null);
   assert.equal(final.replayReady,true);
-  assert.deepEqual(final.sessions[2].board.map(r=>[r.name,r.official]),[['Piloto Teste',600000],['Mais um',601000]]);
+  assert.equal(final.replayAvailable,true);
+  assert.deepEqual(final.sessions[2].board.map(r=>[r.name,r.official]),[['Piloto Teste',360000],['Mais um',361400]]);
   assert.equal((await send('/replay',null,undefined,replayAt)).status,401);
   const manifest=await (await send('/replay',null,cookie,replayAt)).json();
   assert.deepEqual(manifest.drivers.map(d=>[d.name,d.delay,d.official,d.recorded]),[
-    ['Piloto Teste',0,600000,10],['Mais um',2000,601000,0]
+    ['Piloto Teste',0,360000,6],['Mais um',2000,361400,0]
   ]);
   const playback=await (await send('/replay?grid=1',null,cookie,replayAt)).json();
-  assert.equal(playback.laps.length,10);
+  assert.equal(playback.laps.length,6);
   assert.equal(playback.laps[0].valid,1);
   assert.deepEqual(JSON.parse(playback.laps[0].frames),replay);
   assert.equal((await send('/replay?grid=99',null,cookie,replayAt)).status,404);
+});
+
+test('grid starts in qualifying slots, holds on red and moves automatically on green',()=>{
+  const cars=Array.from({length:6},(_,i)=>makePilotCar(setupFor('balanced'),'#ffffff',null,'grid',i+1));
+  assert.equal(cars[0].s,cars[1].s);
+  assert.ok(cars[2].s<cars[0].s);
+  assert.notEqual(cars[0].y,cars[1].y);
+  for(const car of cars){
+    const {x,y,s}=car;
+    for(let tick=0;tick<GRID_RED_TICKS;tick++)stepPilot(car,{w:true});
+    assert.deepEqual([car.x,car.y,car.s,car.v,car.elapsed,car.start],[x,y,s,0,0,null]);
+    for(let tick=0;tick<GRID_ASSIST_TICKS;tick++)stepPilot(car,{});
+    assert.ok(car.v>0&&car.s>s);
+    for(let tick=0;tick<900&&car.start===null;tick++)stepPilot(car,{w:true});
+    assert.notEqual(car.start,null);
+  }
 });
 
 test('race replay interpolates poses and applies grid delay once',()=>{

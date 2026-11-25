@@ -4,6 +4,7 @@ import {drsZoneAt, FLYING_START} from './track-profile.js';
 import {createCareer} from './manager/career.js';
 import {defaultSetup, deriveCar, SETUP} from './manager/model.js';
 import {physicalForces, unitAdapter} from './manager/race-control.js';
+import {GRID_SPACING} from './vehicle-geometry.js';
 
 export const PILOT_SETUP = ['frontWing','rearWing','antiRoll','brakeBias','rideHeight'];
 export const PRESETS = {
@@ -17,20 +18,25 @@ export {SETUP};
 const units = unitAdapter(length,CIRCUIT.metres);
 const fixedStep = 1/60;
 export const PILOT_STEP = fixedStep;
+export const GRID_RED_TICKS = 180;
+export const GRID_ASSIST_TICKS = 72;
 const base = createCareer('aurora','APEX Practice');
 
-export function makePilotCar(setup,color,bestSplits=null,startMode='pits') {
+export function makePilotCar(setup,color,bestSplits=null,startMode='pits',gridPosition=1) {
   base.teams.aurora.cars[0].setup = {...setup};
   const paint=typeof color==='string'?{primary:'#223037',secondary:'#10191c',accent:color,number:1}:color;
   const flying=startMode==='flying';
   const grid=startMode==='grid', onTrack=flying||grid;
-  const s=flying?FLYING_START:grid?-18:length+PIT_LAYOUT.exit-270;
-  const pose=onTrack?at(s):pitPoint(s);
+  const slot=Math.max(0,gridPosition-1);
+  const s=flying?FLYING_START:grid?-80-Math.floor(slot/2)*GRID_SPACING:length+PIT_LAYOUT.exit-270;
+  const lane=grid?(slot%2?24:-24):0;
+  const pose=onTrack?at(s,lane):pitPoint(s);
   return {...pose, s, pit:!onTrack, v:flying?22:0, steer:0, slip:0, drs:false, off:false,
     team:{color:paint.primary,secondary:paint.secondary,accent:paint.accent,pattern:paint.pattern}, compound:'medium', number:paint.number,
     model:deriveCar(base,'aurora',0), elapsed:0, startMode, progress:onTrack?s:0, sector:onTrack?8:0, gate:0,
     start:null, invalid:false, safeS:s, bestSplits, splits:[], lastSplits:[], nextSplit:null,
-    instability:0, spin:0, spinDirection:0, locked:false};
+    instability:0, spin:0, spinDirection:0, locked:false,
+    gridRed:grid?GRID_RED_TICKS:0, gridAssist:grid?GRID_ASSIST_TICKS:0};
 }
 
 function timeLap(car, delta) {
@@ -77,6 +83,14 @@ export function recoverPilot(car, invalidate=true) {
 }
 
 export function stepPilot(car, keys) {
+  if(car.gridRed>0){
+    car.gridRed--;
+    return null;
+  }
+  if(car.gridAssist>0){
+    car.gridAssist--;
+    if(!keys.s)keys={...keys,w:true};
+  }
   car.elapsed += fixedStep;
   if (car.pit) {
     const goal = keys.w && !keys.s ? 22 : 0;

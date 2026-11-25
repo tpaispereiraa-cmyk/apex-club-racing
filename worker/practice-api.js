@@ -6,7 +6,7 @@ const COOKIE = 'apex_practice';
 const PHASES = [
   ['practice','Treino livre',null,null,'2026-11-24T15:00:00.000Z'],
   ['qualifying','Classificação',6,'2026-11-24T15:00:00.000Z','2026-11-24T20:00:00.000Z'],
-  ['race','Corrida',10,'2026-11-24T20:30:00.000Z','2026-11-25T02:59:59.999Z']
+  ['race','Corrida',6,'2026-11-25T12:00:00.000Z','2026-11-25T16:00:00.000Z']
 ];
 const PATTERNS = ['clean','stripe','chevron','checkers','split','bolt'];
 const SETUP_BOUNDS = {frontWing:[0,10],rearWing:[0,10],antiRoll:[0,10],brakeBias:[50,65],rideHeight:[25,65]};
@@ -157,6 +157,9 @@ async function state(db,driver,sessions,now) {
   const basic={round:ROUND,phase:active?.id??null,closesAt:(active??race).closesAt,open:!!active,sessions,limit:(active??race).limit,
     replayAt:new Date(replayAt).toISOString(),replayReady};
   if(!driver)return {...basic,driver:null};
+  const replayAvailable=replayReady&&!!await row(db,`SELECT 1 AS recorded FROM practice_laps l
+    JOIN practice_drivers d ON d.id=l.driver_id
+    WHERE d.event_id=? AND l.round_key=? AND l.phase='race' AND l.elapsed_ms>0 AND l.replay_json IS NOT NULL LIMIT 1`,EVENT,ROUND);
   const {results}=await db.prepare('SELECT lap_id AS id,phase,elapsed_ms AS ms,valid,splits,setup_json FROM practice_laps WHERE driver_id=? AND round_key=? ORDER BY rowid').bind(driver.id,ROUND).all();
   const byPhase=Object.fromEntries(sessions.map(({id})=>[id,results.filter(l=>l.phase===id)]));
   const bestOf=laps=>laps.filter(l=>l.valid).sort((a,b)=>a.ms-b.ms||Number(!!b.splits)-Number(!!a.splits))[0];
@@ -183,7 +186,7 @@ async function state(db,driver,sessions,now) {
     }
     reports.push(report);
   }
-  return {...basic,driver:{name:driver.name,color:driver.color,livery:liveryOf(driver)},sessions:reports,
+  return {...basic,replayAvailable,driver:{name:driver.name,color:driver.color,livery:liveryOf(driver)},sessions:reports,
     used:activeLaps.length,best:best?.ms??null,bestSplits:best?.splits?JSON.parse(best.splits):null,history:historyRows(activeLaps),
     attemptId:active ? activeLaps.findLast(lap=>lap.ms===0)?.id??null : null,
     canStart:!!active&&(active.id==='practice'||activeLaps.length===0),grid,lockedSetup:locked?JSON.parse(locked.setup_json):null};
