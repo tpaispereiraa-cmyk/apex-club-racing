@@ -215,6 +215,10 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   assert.equal(qualified.best,61000);
   assert.equal(qualified.history[2].valid,true);
   await stint(secondCookie,'qualifying',qualStart,[65000,62000,65000,66000,64000,63000]);
+  const changeQualifyingSetup=sqlite.prepare("UPDATE practice_laps SET setup_json=? WHERE phase='qualifying' AND elapsed_ms=?");
+  const pilotSetup=preset=>JSON.stringify(Object.fromEntries(['frontWing','rearWing','antiRoll','brakeBias','rideHeight'].map(id=>[id,setupFor(preset)[id]])));
+  changeQualifyingSetup.run(pilotSetup('speed'),62000);
+  changeQualifyingSetup.run(pilotSetup('agile'),63000);
   const comparisons=(await (await send('/telemetry',null,secondCookie,qualStart)).json()).sessions[1].entries;
   const first=comparisons.find(e=>!e.me);
   assert.equal(first.best.ms,61000);
@@ -246,13 +250,18 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
   assert.equal(race.limit,6);
   assert.equal(race.replayAvailable,false);
   assert.deepEqual(race.grid,{position:3,delay:2600});
-  assert.equal(race.lockedSetup.rearWing,9);
+  assert.deepEqual(race.lockedSetup,JSON.parse(pilotSetup('speed')));
+  const raceCar=makePilotCar(race.lockedSetup,'#ffffff',null,'grid');
+  assert.equal(raceCar.model.cdA,makePilotCar(setupFor('speed'),'#ffffff').model.cdA);
+  assert.ok(Number.isFinite(raceCar.model.mechanicalGrip));
   assert.equal(race.sessions[1].board[0].best,61000);
   assert.equal((await send('/register',{name:'Novo piloto',invite:'test-only'},undefined,raceStart)).status,410);
   const replay=Array.from({length:601},(_,i)=>[i*100,100+i,200,0,Math.round(i/600*10000)]);
   const finishedRace=await stint(cookie,'race',raceStart,Array(6).fill({ms:60000,valid:false,replay}));
   assert.ok(finishedRace.history.every(lap=>lap.valid));
   await stint(secondCookie,'race',raceStart,Array(6).fill(59900));
+  const raceSetups=sqlite.prepare("SELECT DISTINCT setup_json FROM practice_laps WHERE phase='race' AND elapsed_ms=59900").all();
+  assert.deepEqual(raceSetups.map(lap=>JSON.parse(lap.setup_json)),[race.lockedSetup]);
   assert.equal((await (await send('',null,cookie,raceEnd-1)).json()).sessions[2].board,undefined);
   for(const now of [raceStart,raceEnd-1]){
     const hidden=await (await send('',null,cookie,now)).json();

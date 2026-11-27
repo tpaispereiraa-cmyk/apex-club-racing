@@ -374,7 +374,7 @@ export function bootPilot({canvas,ctx,world}) {
     if(phase!=='practice')engineerNote.hidden=true;
     const gridNote=$('#pilot-grid');
     gridNote.hidden=!race||!grid;
-    gridNote.textContent=grid?`P${grid.position} no grid · +${(grid.delay/1000).toLocaleString('pt-BR')} s ao tempo final.${lockedSetup?' Acerto da classificação aplicado.':''}`:'';
+    gridNote.textContent=grid?`P${grid.position} no grid · +${(grid.delay/1000).toLocaleString('pt-BR')} s ao tempo final.${lockedSetup?' Acerto da classificação aplicado automaticamente.':''}`:'';
     const finished=state.history?.filter(lap=>lap.ms!=null) ?? [];
     $('.pilot-start-note').textContent=canStart
       ? race?'Sua corrida é individual. O resultado geral sai no fim da janela.':'Na volta rápida, você começa antes da última curva. A tentativa conta ao cruzar a linha.'

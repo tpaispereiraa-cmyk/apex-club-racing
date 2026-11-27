@@ -99,6 +99,12 @@ async function saveCheckpoint(db,driver,round,session,payload) {
 
 const findAttempt = (db,roundId,driverId,phase,id) => row(db,'SELECT elapsed_ms,next_lap_id,setup_json FROM practice_laps WHERE driver_id=? AND round_key=? AND phase=? AND lap_id=?',driverId,roundId,phase,id);
 
+// Legacy qualifying stints stored the setup only on their first attempt.
+const qualifyingSetupOrder = 'CASE WHEN q.valid=1 AND q.elapsed_ms>0 THEN q.elapsed_ms END ASC NULLS LAST, CASE WHEN q.valid=1 THEN q.splits IS NULL END, q.rowid';
+const bestQualifyingSetup = (db,driverId,roundId) => row(db,`SELECT q.setup_json FROM practice_laps q
+  WHERE q.driver_id=? AND q.round_key=? AND q.phase='qualifying' AND q.setup_json IS NOT NULL
+  ORDER BY ${qualifyingSetupOrder} LIMIT 1`,driverId,roundId);
+
 async function telemetry(db,driver,selectedRound,env,now,requestedRound) {
   const {results:archive}=await db.prepare('SELECT DISTINCT l.round_key FROM practice_laps l JOIN practice_drivers d ON d.id=l.driver_id WHERE d.event_id=? AND l.valid=1 AND l.elapsed_ms>0 ORDER BY l.round_key DESC').bind(EVENT).all();
   const rounds=[...new Set([ACTIVE_PILOT_ROUND.id,selectedRound.id,...archive.map(lap=>lap.round_key)])];
@@ -111,7 +117,7 @@ async function telemetry(db,driver,selectedRound,env,now,requestedRound) {
     CASE WHEN l.phase IN ('practice','qualifying') AND l.replay_json IS NOT NULL THEN l.lap_id END AS replay_id,
     coalesce(l.setup_json, CASE WHEN l.phase IN ('qualifying','race') THEN (
       SELECT q.setup_json FROM practice_laps q WHERE q.driver_id=l.driver_id AND q.round_key=l.round_key
-      AND q.phase='qualifying' AND q.setup_json IS NOT NULL ORDER BY q.rowid LIMIT 1
+      AND q.phase='qualifying' AND q.setup_json IS NOT NULL ORDER BY ${qualifyingSetupOrder} LIMIT 1
     ) END) AS setup_json
     FROM practice_laps l JOIN practice_drivers d ON d.id=l.driver_id
     WHERE d.event_id=? AND l.round_key=? AND l.valid=1 AND l.elapsed_ms>0
@@ -221,7 +227,7 @@ async function state(db,round,driver,sessions,now) {
   const finalByDriver=finalGrid&&new Map(finalGrid.map(row=>[row.id,row]));
   const gridPos=(finalGrid??qualifyRows)?.findIndex(d=>d.id===driver.id);
   const grid=Number.isInteger(gridPos)&&gridPos>=0?{position:gridPos+1,delay:gridPos*GRID_STEP}:null;
-  const locked=byPhase.qualifying.find(l=>l.setup_json);
+  const locked=qualifyRows?await bestQualifyingSetup(db,driver.id,roundId):null;
   const toPublic=({id,livery,recorded,...r})=>r;
   const reports=[];
   for(const session of sessions){
@@ -395,7 +401,7 @@ export async function practiceAPI(request,env,now=Date.now()) {
   if(!lapId(id))return problem('Identificador de volta inválido.',400);
   if(!active||phase!==active.id)return problem('A janela dessa sessão encerrou. Consulte o cronograma do GP.',410);
   if(payload.start===true){
-    const locked=phase==='race'?await row(db,"SELECT setup_json FROM practice_laps WHERE driver_id=? AND round_key=? AND phase='qualifying' AND setup_json IS NOT NULL ORDER BY rowid LIMIT 1",driver.id,roundId):null;
+    const locked=phase==='race'?await bestQualifyingSetup(db,driver.id,roundId):null;
     const setup=locked?JSON.parse(locked.setup_json):parseSetup(payload.setup);
     if(phase==='qualifying'&&!setup)return problem('Acerto da classificação inválido.',400);
     const attempt=await reserveAttempt(db,roundId,driver.id,active,id,{first:true,setup});
