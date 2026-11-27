@@ -98,6 +98,7 @@ export function bootPilot({canvas,ctx,world}) {
         <div id="pilot-acerto"><p>Escolha um acerto para a próxima saída.</p><div class="pilot-presets" role="group" aria-label="Acertos sugeridos">${Object.entries(PRESETS).map(([id,p])=>`<button data-preset="${id}" aria-pressed="false"><b>${p.name}</b><small>${p.description}</small></button>`).join('')}</div>
         <details><summary>Configuração avançada</summary><div class="pilot-sliders">${PILOT_SETUP.map(id=>{const s=SETUP[id];return `<label><span>${s.label} <output></output></span><input type="range" name="${id}" min="${s.min}" max="${s.max}" step="${s.step}"></label>`;}).join('')}</div></details>
         <button type="button" id="pilot-open-engineer" aria-haspopup="dialog" aria-controls="pilot-engineer-dialog" hidden>Falar com o engenheiro</button><p id="pilot-engineer-note" role="status" hidden></p></div>
+        <p id="pilot-race-setup-notice" hidden>Você iniciará <strong>ESTA</strong> corrida com a configuração de seu melhor tempo.</p>
         <div class="pilot-start-options"><button class="pilot-button" data-pilot-start="pits">Sair dos boxes</button><button class="pilot-button" data-pilot-start="flying">Iniciar volta rápida</button><button class="pilot-button" data-pilot-start="grid" hidden>Ir para a largada</button><button class="pilot-button" id="pilot-resume" hidden>Continuar</button></div>
         <button class="pilot-button" id="pilot-warmup" hidden>Treinar</button>
         <p class="pilot-start-note"></p>
@@ -374,7 +375,9 @@ export function bootPilot({canvas,ctx,world}) {
     if(phase!=='practice')engineerNote.hidden=true;
     const gridNote=$('#pilot-grid');
     gridNote.hidden=!race||!grid;
-    gridNote.textContent=grid?`P${grid.position} no grid · +${(grid.delay/1000).toLocaleString('pt-BR')} s ao tempo final.${lockedSetup?' Acerto da classificação aplicado automaticamente.':''}`:'';
+    gridNote.textContent=grid?`P${grid.position} no grid · +${(grid.delay/1000).toLocaleString('pt-BR')} s ao tempo final.`:'';
+    const qualified=state.sessions.find(session=>session.id==='qualifying')?.history?.some(lap=>lap.valid&&lap.ms>0);
+    $('#pilot-race-setup-notice').hidden=!(race&&canStart&&!resumable&&lockedSetup&&qualified);
     const finished=state.history?.filter(lap=>lap.ms!=null) ?? [];
     $('.pilot-start-note').textContent=canStart
       ? race?'Sua corrida é individual. O resultado geral sai no fim da janela.':'Na volta rápida, você começa antes da última curva. A tentativa conta ao cruzar a linha.'
