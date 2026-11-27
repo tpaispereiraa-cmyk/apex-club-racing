@@ -117,6 +117,7 @@ export function bootPilot({canvas,ctx,world}) {
       </section>
     </div>
     <section class="pilot-track" hidden>
+      <div id="pilot-resume-countdown" role="status" aria-atomic="true" hidden><span>RETOMANDO SESSÃO</span><strong>3</strong></div>
       <div class="pilot-track-top"><div><span id="pilot-phase">PISTA</span><strong id="pilot-live-time">—</strong></div><div><span>VOLTAS USADAS</span><strong id="pilot-live-quota">—</strong><small id="pilot-lap-sync" hidden>Sincronizando…</small></div></div>
       <p id="pilot-radio" role="status"></p>
       <div id="pilot-grid-signal" role="status" hidden><i aria-hidden="true"></i><strong></strong></div>
@@ -128,6 +129,8 @@ export function bootPilot({canvas,ctx,world}) {
   document.body.append(ui);
   const $ = id => ui.querySelector(id);
   const form = $('#pilot-register'), garage = $('.pilot-garage'), track = $('.pilot-track');
+  const resumeCountdown=$('#pilot-resume-countdown'), resumeNumber=resumeCountdown.querySelector('strong');
+  const recoverButton=track.querySelector('[data-action=recover]');
   const loginForm = $('#pilot-login'), credentialsForm = $('#pilot-credentials form');
   const setupForm = $('#pilot-saved-setups form'), savedSetupSelect = $('#pilot-saved-setups select');
   const inviteUrl=new URL(location.href);
@@ -169,6 +172,7 @@ export function bootPilot({canvas,ctx,world}) {
     await openLapReplay(ui,world,getState,format,id,phase);
   });
   let last=0, accumulator=0, camera=null, width=0, height=0, density=1, zoomFactor=1;
+  let resumeAt=null;
   const elapsed = ()=>car?.start == null ? null : Math.round((car.elapsed-car.start)*1000);
   const message = value => {$('.pilot-message').textContent=value;};
   const radio = value => {$('#pilot-radio').textContent=value;};
@@ -424,10 +428,17 @@ export function bootPilot({canvas,ctx,world}) {
   }
   function leave() {
     car=null; track.hidden=true; garage.hidden=false;
+    clearResumeCountdown();
     attemptId=null;
     keys.clear(); touches.clear();
     last=0; accumulator=0; showState();
     if(!saving&&!pending.length)unlockRun();
+  }
+
+  function clearResumeCountdown() {
+    resumeAt=null;
+    resumeCountdown.hidden=true;
+    recoverButton.disabled=false;
   }
 
   function persistLaps() {
@@ -650,6 +661,11 @@ export function bootPilot({canvas,ctx,world}) {
         selectedReport=drivingPhase;
         last=0;accumulator=0;
         garage.hidden=true;track.hidden=false;
+        resumeAt=performance.now()+3000;
+        resumeNumber.textContent='3';
+        resumeCountdown.hidden=false;
+        $('#pilot-grid-signal').hidden=true;
+        recoverButton.disabled=true;
         track.querySelector('[data-action=garage]').textContent='Pausar';
         return;
       }
@@ -708,7 +724,7 @@ export function bootPilot({canvas,ctx,world}) {
   }
   track.addEventListener('click',e=>{
     if(e.target.dataset.action==='garage')exitTrack();
-    if(e.target.dataset.action==='recover' && car && !car.pit && !car.gridRed)recoverPilot(car);
+    if(e.target.dataset.action==='recover' && car && !car.pit && !car.gridRed && resumeAt===null)recoverPilot(car);
   });
   const drivingKey=key=>({ArrowUp:'w',ArrowLeft:'a',ArrowDown:'s',ArrowRight:'d'}[key]??key.toLowerCase());
   addEventListener('keydown',e=>{
@@ -765,7 +781,13 @@ export function bootPilot({canvas,ctx,world}) {
         if(!pending.length)refresh();
         return;
       }
-      if(!document.hidden) {
+      const resuming=resumeAt!==null;
+      if(resuming){
+        const seconds=Math.ceil((resumeAt-now)/1000);
+        if(seconds<=0)clearResumeCountdown();
+        else if(resumeNumber.textContent!==String(seconds))resumeNumber.textContent=String(seconds);
+      }
+      if(!resuming&&!document.hidden) {
         accumulator+=dt;
         const pressed=new Set([...keys,...touches.values()]);
         const input=Object.fromEntries([...pressed].map(key=>[key,true]));
@@ -821,8 +843,8 @@ export function bootPilot({canvas,ctx,world}) {
         }
         $('#pilot-lap-sync').hidden=!pending.length;
         const signal=$('#pilot-grid-signal'), red=car.gridRed>0, green=!red&&car.gridAssist>0;
-        signal.hidden=!(red||green);
-        if(red||green){
+        signal.hidden=resuming||!(red||green);
+        if(!signal.hidden){
           signal.dataset.light=red?'red':'green';
           const label=red?`P${state.grid?.position??1} · ${Math.ceil(car.gridRed*PILOT_STEP)}`:'VERDE · ACELERE';
           const title=signal.querySelector('strong');
@@ -831,8 +853,8 @@ export function bootPilot({canvas,ctx,world}) {
         $('#pilot-phase').textContent=drivingPhase==='warmup'?'AQUECIMENTO':car.pit?'PIT LANE':car.start!==null?(drivingPhase==='race'?'VOLTA DE CORRIDA':'VOLTA RÁPIDA'):car.startMode==='grid'?'LARGADA':car.startMode==='flying'?'APROXIMAÇÃO':'VOLTA DE SAÍDA';
         $('#pilot-live-time').textContent=format(elapsed());
         $('.pilot-speed strong').textContent=Math.round(car.v*3.6);
-        const brake=keys.has('s')||[...touches.values()].includes('s');
-        const throttle=!red&&!brake&&(green||keys.has('w')||[...touches.values()].includes('w'))?1:0;
+        const brake=!resuming&&(keys.has('s')||[...touches.values()].includes('s'));
+        const throttle=!resuming&&!red&&!brake&&(green||keys.has('w')||[...touches.values()].includes('w'))?1:0;
         const revs=racingAudio.update({active:!document.hidden,speed:car.v,throttle,braking:brake});
         $('#pilot-gear').textContent=car.v<.4&&!throttle?'N':revs.gear;
         for(const [i,output] of splitOutputs.entries()){
@@ -844,7 +866,7 @@ export function bootPilot({canvas,ctx,world}) {
         }
         $('.pilot-speed span').dataset.available=String(!car.pit&&drsZoneAt(car.s)>=0);
         $('.pilot-speed span').dataset.active=String(car.drs);
-        radio(red?'Aguarde o sinal verde.':green?'Largada liberada · mantenha W ou ↑ para acelerar.':car.pit?'Segure W para sair dos boxes.':car.spin>0?'Rodada · alivie os comandos para recuperar.':car.locked?'Rodas travadas · alivie o freio.':car.off?'Brita · aderência reduzida.':car.start===null?'Cruze a linha para começar o cronômetro.':latest?`Última volta ${format(latest.ms)}`:'Volta cronometrada em andamento.');
+        radio(resuming?'Aguarde a contagem para continuar.':red?'Aguarde o sinal verde.':green?'Largada liberada · mantenha W ou ↑ para acelerar.':car.pit?'Segure W para sair dos boxes.':car.spin>0?'Rodada · alivie os comandos para recuperar.':car.locked?'Rodas travadas · alivie o freio.':car.off?'Brita · aderência reduzida.':car.start===null?'Cruze a linha para começar o cronômetro.':latest?`Última volta ${format(latest.ms)}`:'Volta cronometrada em andamento.');
       }
     } else racingAudio.update();
     paint(car??idle);
