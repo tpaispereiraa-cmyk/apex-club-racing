@@ -11,10 +11,11 @@ import {engineRevs} from './racing-audio.js';
 import {fastestLaps,lapHistoryTable,pilotLapRows} from './lap-history.js';
 import {broadcastEvents,interpolateReplay,replayGap,replayPosition,timingReference} from './pilot-replay-timing.js';
 import {parseRoute} from './routes.js';
+import {activePilotRound,pilotRoundById} from './pilot-rounds.js';
 
 function practiceFixture(){
   const sqlite=new DatabaseSync(':memory:');
-  for(const file of ['0000_practice','0001_practice_splits','0002_pilot_weekend','0003_race_replay','0004_pilot_accounts','0005_practice_quota']){
+  for(const file of ['0000_practice','0001_practice_splits','0002_pilot_weekend','0003_race_replay','0004_pilot_accounts','0005_practice_quota','0006_pilot_session_progress']){
     sqlite.exec(readFileSync(new URL(`./drizzle/${file}.sql`,import.meta.url),'utf8'));
   }
   const env={PRACTICE_INVITE:'test-only',PRACTICE_CLOSES_AT:'2090-01-01T00:00:00Z',DB:{prepare(sql){return{bind(...args){return{
@@ -346,9 +347,74 @@ test('invitation, unlimited practice, session limits, retries and deadline',asyn
 });
 
 test('Pilotar loads the current series circuit and the archived circuit independently',()=>{
-  assert.equal(parseRoute('/pilotar').circuit,'red-bull-ring');
+  assert.equal(parseRoute('/pilotar',Date.parse('2026-11-27T20:00:00Z')).circuit,'red-bull-ring');
+  assert.equal(parseRoute('/pilotar',Date.parse('2026-11-28T03:00:00Z')).circuit,'silverstone');
   assert.equal(parseRoute('/pilotar?rodada=2026-11-22-weekend').circuit,'interlagos');
   assert.equal(parseRoute('/assistir/monza').circuit,'monza');
+});
+
+test('Silverstone lets each pilot finish or skip 45 practice laps before six qualifying laps, with racing on Sunday',async()=>{
+  const {send,env,sqlite}=practiceFixture();
+  delete env.PRACTICE_CLOSES_AT;
+  const series='2026-11-28-silverstone',saturday=Date.parse('2026-11-28T03:00:00Z'),sunday=Date.parse('2026-11-29T03:00:00Z');
+  assert.equal(activePilotRound(saturday-1).circuit,'red-bull-ring');
+  assert.equal(activePilotRound(saturday).circuit,'silverstone');
+  assert.deepEqual(pilotRoundById(series).sessions.map(s=>s[2]),[45,6,20]);
+  const register=async login=>{
+    const response=await send('/register',{name:login,login,password:'silverstone-test',invite:'test-only'},null,saturday,series);
+    assert.equal(response.status,201);
+    return response.headers.get('Set-Cookie').split(';')[0];
+  };
+  const cookie=await register('Silverstone1'),skipping=await register('Silverstone2');
+  const read=async (who=cookie,now=saturday)=>(await send('',null,who,now,series)).json();
+  const start=async (who,phase,id)=>send('/lap',{phase,start:true,id,setup:setupFor('speed')},who,saturday,series);
+  const before=await read();
+  assert.equal(before.phase,'practice');
+  assert.equal(before.used,0);
+  assert.equal((await start(cookie,'qualifying',crypto.randomUUID())).status,410);
+  assert.equal((await send('/finish-practice',{confirm:false},skipping,saturday,series)).status,400);
+  const advanced=await send('/finish-practice',{confirm:true},skipping,saturday,series);
+  assert.equal((await advanced.json()).phase,'qualifying');
+  assert.equal((await start(skipping,'practice',crypto.randomUUID())).status,410);
+  assert.equal((await read(skipping)).phase,'qualifying');
+  assert.equal((await read()).phase,'practice');
+  let id=crypto.randomUUID();
+  await start(cookie,'practice',id);
+  assert.equal((await read()).used,0);
+  // Abandoning an approach or incomplete lap does not consume a completed lap.
+  id=crypto.randomUUID();
+  await start(cookie,'practice',id);
+  let last;
+  for(let i=1;i<=45;i++){
+    const nextId=crypto.randomUUID();
+    const response=await send('/lap',{phase:'practice',id,ms:60000,nextId},cookie,saturday,series);
+    assert.equal(response.status,200);
+    last=await response.json();
+    if(i<45){assert.equal(last.used,i);assert.equal(last.phase,'practice');}
+    else {
+      assert.equal(last.phase,'qualifying');assert.equal(last.used,0);assert.equal(last.canStart,true);
+      assert.equal((await send('/lap',{phase:'practice',id,ms:60000,nextId},cookie,saturday,series)).status,200);
+    }
+    id=nextId;
+  }
+  assert.equal((await start(cookie,'practice',crypto.randomUUID())).status,410);
+  assert.equal(sqlite.prepare("SELECT count(*) AS n FROM practice_laps WHERE round_key=? AND phase='practice' AND elapsed_ms>0").get(series).n,45);
+  id=crypto.randomUUID();
+  await start(cookie,'qualifying',id);
+  for(let i=1;i<=6;i++){
+    const nextId=crypto.randomUUID();
+    const response=await send('/lap',{phase:'qualifying',id,ms:60000,nextId},cookie,saturday,series);
+    assert.equal(response.status,200);
+    last=await response.json();id=nextId;
+  }
+  assert.equal(last.used,6);assert.equal(last.canStart,false);assert.equal(last.attemptId,null);
+  assert.equal((await start(cookie,'qualifying',crypto.randomUUID())).status,409);
+  assert.equal((await read(cookie,sunday-2)).phase,'qualifying');
+  const race=await read(cookie,sunday);
+  assert.equal(race.phase,'race');assert.equal(race.limit,20);
+  assert.equal(race.lockedSetup.rearWing,1);
+  const deadline=Date.parse('2026-11-30T02:59:59.999Z');
+  assert.equal((await read(cookie,deadline)).phase,null);
 });
 
 test('grid starts in qualifying slots, holds on red and moves automatically on green',()=>{

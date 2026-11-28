@@ -1,4 +1,4 @@
-import {ACTIVE_PILOT_ROUND,pilotRoundById} from '../pilot-rounds.js';
+import {activePilotRound,pilotRoundById} from '../pilot-rounds.js';
 import {hash,randomHex,loginName,validLogin,validPassword,createCredentials,matchesPassword} from './pilot-credentials.js';
 
 const EVENT = 'interlagos-2026-11-21';
@@ -41,12 +41,32 @@ function calendar(round,env,now) {
   const practiceClose=Date.parse(env.PRACTICE_CLOSES_AT);
   return round.sessions.map(([id,name,limit,opensAt,closesAt],i)=>{
     if(Number.isFinite(practiceClose)){
-      opensAt=i ? new Date(practiceClose+(i-1)*DAY).toISOString() : null;
-      closesAt=new Date(practiceClose+i*DAY).toISOString();
+      const slot=round.practiceBeforeQualifying?Math.max(0,i-1):i;
+      opensAt=slot ? new Date(practiceClose+(slot-1)*DAY).toISOString() : null;
+      closesAt=new Date(practiceClose+slot*DAY).toISOString();
     }
     return {id,name,limit,opensAt,closesAt,
       status:now>=Date.parse(closesAt)?'closed':opensAt&&now<Date.parse(opensAt)?'upcoming':'open'};
   });
+}
+
+async function driverSessions(db,round,driver,env,now) {
+  const sessions=calendar(round,env,now);
+  if(!round.practiceBeforeQualifying)return sessions;
+  const practice=sessions[0],qualifying=sessions[1];
+  practice.countCompleted=true;
+  if(practice.status!=='open'||qualifying.status!=='open')return sessions;
+  const progress=driver?await row(db,`SELECT
+    (SELECT count(*) FROM practice_laps WHERE driver_id=? AND round_key=? AND phase='practice' AND elapsed_ms>0 AND quota_exempt=0) AS completed,
+    EXISTS(SELECT 1 FROM practice_session_progress WHERE driver_id=? AND round_key=?) AS advanced`,
+    driver.id,round.id,driver.id,round.id):{completed:0,advanced:0};
+  if(progress.completed>=practice.limit&&!progress.advanced){
+    await db.prepare('INSERT INTO practice_session_progress(driver_id,round_key,qualifying_started_at) VALUES(?,?,?) ON CONFLICT DO NOTHING')
+      .bind(driver.id,round.id,now).run();
+  }
+  if(progress.advanced||progress.completed>=practice.limit)practice.status='closed';
+  else {qualifying.status='upcoming';qualifying.gated=true;}
+  return sessions;
 }
 
 function liveryOf(driver) {
@@ -107,7 +127,7 @@ const bestQualifyingSetup = (db,driverId,roundId) => row(db,`SELECT q.setup_json
 
 async function telemetry(db,driver,selectedRound,env,now,requestedRound) {
   const {results:archive}=await db.prepare('SELECT DISTINCT l.round_key FROM practice_laps l JOIN practice_drivers d ON d.id=l.driver_id WHERE d.event_id=? AND l.valid=1 AND l.elapsed_ms>0 ORDER BY l.round_key DESC').bind(EVENT).all();
-  const rounds=[...new Set([ACTIVE_PILOT_ROUND.id,selectedRound.id,...archive.map(lap=>lap.round_key)])];
+  const rounds=[...new Set([activePilotRound(now).id,selectedRound.id,...archive.map(lap=>lap.round_key)])];
   const round=requestedRound??selectedRound.id;
   if(!rounds.includes(round))return null;
   const definition=pilotRoundById(round);
@@ -146,11 +166,16 @@ async function telemetry(db,driver,selectedRound,env,now,requestedRound) {
   }))};
 }
 
-async function reserveAttempt(db,roundId,driverId,{id:phase,limit},id,{first=false,setup=null}={}) {
+async function reserveAttempt(db,roundId,driverId,{id:phase,limit,countCompleted=false},id,{first=false,setup=null}={}) {
   // An exclusive phase only accepts a fresh run while its quota is empty.
   const max=first&&phase!=='practice'?1:limit;
-  await db.prepare('INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid,round_key,phase,setup_json) SELECT ?,?,0,0,?,?,? WHERE ? IS NULL OR (SELECT count(*) FROM practice_laps WHERE driver_id=? AND round_key=? AND phase=? AND quota_exempt=0) < ? ON CONFLICT(driver_id,lap_id) DO NOTHING')
-    .bind(driverId,id,roundId,phase,setup?JSON.stringify(setup):null,max,driverId,roundId,phase,max).run();
+  await db.prepare(`INSERT INTO practice_laps(driver_id,lap_id,elapsed_ms,valid,round_key,phase,setup_json)
+    SELECT ?,?,0,0,?,?,? WHERE (? IS NULL OR (SELECT count(*) FROM practice_laps
+      WHERE driver_id=? AND round_key=? AND phase=? AND quota_exempt=0 AND (?=0 OR elapsed_ms>0)) < ?)
+    AND (?=0 OR NOT EXISTS(SELECT 1 FROM practice_session_progress WHERE driver_id=? AND round_key=?))
+    ON CONFLICT(driver_id,lap_id) DO NOTHING`)
+    .bind(driverId,id,roundId,phase,setup?JSON.stringify(setup):null,max,driverId,roundId,phase,Number(countCompleted),max,
+      Number(countCompleted),driverId,roundId).run();
   return findAttempt(db,roundId,driverId,phase,id);
 }
 
@@ -202,11 +227,12 @@ async function raceReplay(db,roundId,race,gridPosition) {
   return json({limit:race.limit,drivers});
 }
 
-async function state(db,round,driver,sessions,now) {
+async function state(db,round,driver,sessions,now,env) {
+  if(round.practiceBeforeQualifying)sessions=await driverSessions(db,round,driver,env,now);
   const roundId=round.id;
   const active=sessions.find(s=>s.status==='open');
   const race=sessions.at(-1), replayAt=replayTime(race), replayReady=now>=replayAt;
-  const basic={round:roundId,circuit:round.circuit,phase:active?.id??null,closesAt:(active??race).closesAt,open:!!active,sessions,limit:(active??race).limit,
+  const basic={round:roundId,circuit:round.circuit,practiceBeforeQualifying:!!round.practiceBeforeQualifying,phase:active?.id??null,closesAt:(active??race).closesAt,open:!!active,sessions,limit:(active??race).limit,
     replayAt:new Date(replayAt).toISOString(),replayReady};
   if(!driver){
     const {results:pilots}=await db.prepare('SELECT name, login IS NOT NULL AS canLogin FROM practice_drivers WHERE event_id=? ORDER BY name_key').bind(EVENT).all();
@@ -220,7 +246,7 @@ async function state(db,round,driver,sessions,now) {
   const byPhase=Object.fromEntries(sessions.map(({id})=>[id,results.filter(l=>l.phase===id)]));
   const bestOf=laps=>laps.filter(l=>l.valid).sort((a,b)=>a.ms-b.ms||Number(!!b.splits)-Number(!!a.splits))[0];
   const activeLaps=byPhase[active?.id??'race'], best=bestOf(activeLaps);
-  const used=activeLaps.filter(lap=>!lap.quota_exempt).length;
+  const used=activeLaps.filter(lap=>!lap.quota_exempt&&(!active?.countCompleted||lap.ms>0)).length;
   const historyRows=laps=>laps.map(({ms,valid,splits})=>({ms:ms||null,valid:!!valid,splits:splits?JSON.parse(splits):null}));
   const qualifyRows=sessions[1].status==='closed'?await standings(db,roundId,'qualifying'):null;
   const finalGrid=replayReady?await raceGrid(db,roundId,qualifyRows,race.limit):null;
@@ -261,14 +287,14 @@ export async function practiceAPI(request,env,now=Date.now()) {
   if(!requestedSeries&&request.method==='POST'&&url.pathname==='/api/practice/lap'){
     return problem('Recarregue a página para pilotar na rodada atual.',409);
   }
-  const roundId=requestedSeries??ACTIVE_PILOT_ROUND.id, round=pilotRoundById(roundId);
+  const roundId=requestedSeries??activePilotRound(now).id, round=pilotRoundById(roundId);
   if(!round)return problem('Rodada indisponível.',404);
-  const sessions=calendar(round,env,now), active=sessions.find(s=>s.status==='open'), race=sessions.at(-1);
-  const replayReady=now>=replayTime(race);
   const token=request.headers.get('cookie')?.match(new RegExp(`(?:^|;\\s*)${COOKIE}=([a-f0-9]{64})(?:;|$)`))?.[1];
   const tokenHash=token?await hash(token):null;
   const driver=await signedInDriver(db,tokenHash,now);
-  const current=()=>state(db,round,driver,sessions,now);
+  const sessions=await driverSessions(db,round,driver,env,now), active=sessions.find(s=>s.status==='open'), race=sessions.at(-1);
+  const replayReady=now>=replayTime(race);
+  const current=()=>state(db,round,driver,sessions,now,env);
   if(request.method==='GET'&&url.pathname==='/api/practice')return json(await current());
   if(request.method==='GET'&&url.pathname==='/api/practice/checkpoint'){
     if(!driver)return problem('Entre no seu carro antes de continuar.',401);
@@ -329,7 +355,7 @@ export async function practiceAPI(request,env,now=Date.now()) {
     await db.prepare('DELETE FROM practice_sessions WHERE driver_id=? AND expires_at<=?').bind(account.id,now).run();
     await db.prepare('INSERT INTO practice_sessions(token_hash,driver_id,expires_at) VALUES(?,?,?)')
       .bind(await hash(session),account.id,now+SESSION_SECONDS*1000).run();
-    return json(await state(db,round,account,sessions,now),200,sessionCookie(url,session));
+    return json(await state(db,round,account,sessions,now,env),200,sessionCookie(url,session));
   }
 
   const login=loginName(payload.login);
@@ -354,10 +380,17 @@ export async function practiceAPI(request,env,now=Date.now()) {
       }
       return problem('Esse login já está em uso. Escolha outro.',409);
     }
-    return json(await state(db,round,{id,name,color,livery:stored,login},sessions,now),201,sessionCookie(url,session));
+    return json(await state(db,round,{id,name,color,livery:stored,login},sessions,now,env),201,sessionCookie(url,session));
   }
 
   if(!driver)return problem('Entre no seu carro antes de continuar.',401);
+  if(url.pathname==='/api/practice/finish-practice'){
+    if(!round.practiceBeforeQualifying||!active||!['practice','qualifying'].includes(active.id))return problem('O treino desta rodada já encerrou.',410);
+    if(payload.confirm!==true)return problem('Confirme a passagem definitiva para o quali.',400);
+    await db.prepare('INSERT INTO practice_session_progress(driver_id,round_key,qualifying_started_at) VALUES(?,?,?) ON CONFLICT DO NOTHING')
+      .bind(driver.id,roundId,now).run();
+    return json(await current());
+  }
   if(url.pathname==='/api/practice/credentials'){
     if(driver.login)return problem('Este piloto já tem login cadastrado.',409);
     if(!validLogin(login)||!validPassword(payload.password))return problem('Escolha um login de 3 a 24 caracteres e uma senha de 6 a 128 caracteres.',400);
@@ -366,12 +399,12 @@ export async function practiceAPI(request,env,now=Date.now()) {
       WHERE id=? AND login IS NULL AND NOT EXISTS (SELECT 1 FROM practice_drivers WHERE event_id=? AND login=?)`)
       .bind(login,salt,digest,driver.id,EVENT,login).run();
     if(!result.meta.changes)return problem('Esse login já está em uso ou este piloto já cadastrou uma senha.',409);
-    return json(await state(db,round,{...driver,login},sessions,now));
+    return json(await state(db,round,{...driver,login},sessions,now,env));
   }
   if(url.pathname==='/api/practice/logout'){
     if(!driver.login)return problem('Cadastre um login e uma senha antes de sair.',409);
     await db.prepare('DELETE FROM practice_sessions WHERE token_hash=?').bind(tokenHash).run();
-    return json(await state(db,round,null,sessions,now),200,sessionCookie(url,'',0));
+    return json(await state(db,round,null,sessions,now,env),200,sessionCookie(url,'',0));
   }
   if(url.pathname==='/api/practice/setup'){
     const name=cleanName(payload.name), setup=parseSetup(payload.setup);
@@ -394,11 +427,15 @@ export async function practiceAPI(request,env,now=Date.now()) {
     if(!livery)return problem('Pintura inválida.',400);
     const stored=JSON.stringify(livery);
     await db.prepare('UPDATE practice_drivers SET color=?,livery=? WHERE id=?').bind(livery.accent,stored,driver.id).run();
-    return json(await state(db,round,{...driver,color:livery.accent,livery:stored},sessions,now));
+    return json(await state(db,round,{...driver,color:livery.accent,livery:stored},sessions,now,env));
   }
   if(url.pathname!=='/api/practice/lap')return problem('Rota inexistente.',404);
   const {id,ms,splits,nextId,phase,replay}=payload;
   if(!lapId(id))return problem('Identificador de volta inválido.',400);
+  if(round.practiceBeforeQualifying&&phase==='practice'&&active?.id==='qualifying'&&payload.start!==true){
+    const previous=await findAttempt(db,roundId,driver.id,phase,id);
+    if(previous?.elapsed_ms>0)return json({...await current(),attemptId:null});
+  }
   if(!active||phase!==active.id)return problem('A janela dessa sessão encerrou. Consulte o cronograma do GP.',410);
   if(payload.start===true){
     const locked=phase==='race'?await bestQualifyingSetup(db,driver.id,roundId):null;
@@ -416,9 +453,14 @@ export async function practiceAPI(request,env,now=Date.now()) {
   let attempt=await findAttempt(db,roundId,driver.id,phase,id);
   if(!attempt)return problem('Essa tentativa não foi iniciada. Recarregue a página para começar outra volta.',409);
   if(attempt.elapsed_ms===0){
-    await db.prepare('UPDATE practice_laps SET elapsed_ms=?,valid=1,splits=?,next_lap_id=?,replay_json=? WHERE driver_id=? AND round_key=? AND phase=? AND lap_id=? AND elapsed_ms=0')
-      .bind(ms,splits?JSON.stringify(splits):null,nextId??null,replay?JSON.stringify(replay):null,driver.id,roundId,phase,id).run();
+    const saved=await db.prepare(`UPDATE practice_laps SET elapsed_ms=?,valid=1,splits=?,next_lap_id=?,replay_json=?
+      WHERE driver_id=? AND round_key=? AND phase=? AND lap_id=? AND elapsed_ms=0
+      AND (?=0 OR (NOT EXISTS(SELECT 1 FROM practice_session_progress WHERE driver_id=? AND round_key=?)
+        AND (SELECT count(*) FROM practice_laps WHERE driver_id=? AND round_key=? AND phase='practice' AND elapsed_ms>0 AND quota_exempt=0)<?))`)
+      .bind(ms,splits?JSON.stringify(splits):null,nextId??null,replay?JSON.stringify(replay):null,driver.id,roundId,phase,id,
+        Number(!!active.countCompleted),driver.id,roundId,driver.id,roundId,active.limit).run();
     attempt=await findAttempt(db,roundId,driver.id,phase,id);
+    if(!saved.meta.changes&&attempt.elapsed_ms===0)return problem('O treino encerrou. Recarregue para continuar no quali.',409);
   }
   const next=attempt.next_lap_id?await reserveAttempt(db,roundId,driver.id,active,attempt.next_lap_id,{
     setup:attempt.setup_json?JSON.parse(attempt.setup_json):null

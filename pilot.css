@@ -82,6 +82,10 @@
 #pilot-warmup { margin-top: .55rem; }
 #pilot .pilot-start-note { font-size: .85rem; margin-bottom: .5rem; }
 #pilot #pilot-race-setup-notice { padding: .65rem .8rem; border-left: 3px solid var(--lime); background: #253629; color: #edf5e7; font-size: .9rem; }
+#pilot-practice-progression { padding: .65rem .8rem; margin: .75rem 0; border: 1px solid #d5f56160; background: #203126; }
+#pilot-practice-progression p { font-size: .9rem; }
+#pilot-finish-practice { width: 100%; padding: .7rem; background: #17271f; color: var(--lime); border: 1px solid #d5f56180; font: inherit; }
+#pilot-finish-practice:disabled { opacity: .5; cursor: default; }
 .pilot-presets { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
 .pilot-presets button, .pilot-drive-actions button { border: 1px solid #bbcdb940; background: #182923; padding: .7rem; color: #f3f7f0; font-size: .9rem; text-align: left; }
 .pilot-presets small { display: block; color: #b8caba; line-height: 1.4; margin-top: .2rem; font-size: .8rem; }

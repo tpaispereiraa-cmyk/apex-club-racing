@@ -1,7 +1,7 @@
 import {drawCar} from './car-renderer.js';
 import {at, CIRCUIT, length, W, H} from './track.js';
 import {circuitById} from './circuits.js';
-import {ACTIVE_PILOT_ROUND,PILOT_ROUNDS,pilotRoundById,pilotRoundUrl} from './pilot-rounds.js';
+import {ACTIVE_PILOT_ROUND,PILOT_ROUNDS,activePilotRound,pilotRoundById,pilotRoundUrl} from './pilot-rounds.js';
 import {drsZoneAt} from './track-profile.js';
 import {distanceToDRS} from './pilot-drs.js';
 import {drawPilotGuides} from './pilot-track-guide.js';
@@ -74,7 +74,7 @@ export function bootPilot({canvas,ctx,world}) {
     <div class="pilot-garage">
       <section class="pilot-intro"><span class="pilot-kicker">GP · ${CIRCUIT.name.toUpperCase()}</span><h1>Treino <em>livre.</em></h1><p id="pilot-deadline">Consultando o cronograma…</p>
       <nav class="pilot-round-links" aria-label="Rodadas">${PILOT_ROUNDS.filter(round=>round.id!==pilotRound.id).map(round=>
-        `<a href="${pilotRoundUrl(round.id)}">${round.id===ACTIVE_PILOT_ROUND.id?'Rodada atual':'Resultados e replay'} · ${circuitById(round.circuit).name} →</a>`).join('')}</nav>
+        `<a href="${pilotRoundUrl(round.id)}">${round.id===ACTIVE_PILOT_ROUND.id?'Rodada atual':Date.parse(round.sessions[0][3])>Date.now()?'Próxima rodada':'Resultados e replay'} · ${circuitById(round.circuit).name} →</a>`).join('')}</nav>
       <div class="pilot-schedule" role="group" aria-label="Sessões do GP"></div>
       <p class="pilot-session-note" id="pilot-session-note"></p>
       <button id="pilot-open-telemetry" type="button" aria-haspopup="dialog" aria-controls="pilot-telemetry"><span class="telemetry-glyph" aria-hidden="true"><i></i><i></i><i></i></span><span><b>Telemetria</b><small>Compare voltas e setores dos pilotos</small></span></button>
@@ -106,6 +106,7 @@ export function bootPilot({canvas,ctx,world}) {
         <div class="pilot-start-options"><button class="pilot-button" data-pilot-start="pits">Sair dos boxes</button><button class="pilot-button" data-pilot-start="flying">Iniciar volta rápida</button><button class="pilot-button" data-pilot-start="grid" hidden>Ir para a largada</button><button class="pilot-button" id="pilot-resume" hidden>Continuar</button></div>
         <button class="pilot-button" id="pilot-warmup" hidden>Treinar</button>
         <p class="pilot-start-note"></p>
+        <div id="pilot-practice-progression" hidden><p>Ao concluir as 45 voltas de treino, você passa para o quali de 6 voltas rápidas. Você também pode pular o restante do treino.</p><button id="pilot-finish-practice" type="button">Pular treino e ir para o quali</button></div>
         <button type="button" id="pilot-sync-pause" hidden>Sincronizar pausa</button>
         <p class="pilot-controls">Configure as teclas, câmera e fantasma em Pilotagem. Use o scroll ou os botões + e − para ajustar a visão.</p></div>
         <details id="pilot-saved-setups" hidden><summary>Configurações salvas</summary>
@@ -208,7 +209,8 @@ export function bootPilot({canvas,ctx,world}) {
     run.car.model?.cdA,run.car.model?.mechanicalGrip].every(Number.isFinite) && (run.attemptId
     ? run.attemptId===state.attemptId : state.canStart);
   const warmupLaps = () => warmup?.round===state.round && warmup?.driver===state.driver?.name ? warmup.used : 0;
-  const usedLaps = () => (state.used??0)+pending.filter(op=>op.phase===drivingPhase&&(op.start||op.nextId)).length;
+  const usedLaps = () => (state.used??0)+pending.filter(op=>op.phase===drivingPhase
+    &&(state.practiceBeforeQualifying&&drivingPhase==='practice'?!op.start:op.start||op.nextId)).length;
   const canWarmup = () => pilotRound.warmup && !!state.driver && state.phase==='qualifying' && state.canStart
     && !canResume(savedRun) && !pending.length && warmupLaps()<warmupLimit;
 
@@ -360,13 +362,16 @@ export function bootPilot({canvas,ctx,world}) {
       button.dataset.status=session.status;
       button.querySelector('b').textContent=session.name;
       time.dateTime=session.closesAt;
-      time.textContent=session.status==='upcoming'
+      time.textContent=session.gated?'Após o treino, até '+deadline(session.closesAt):session.status==='upcoming'
         ? `${deadline(session.opensAt)} – ${deadline(session.closesAt)}`
         : deadline(session.closesAt);
       button.querySelector('small').textContent={open:'Em andamento',upcoming:'Aguardando',
         closed:session.id==='race'?'Finalizada':'Encerrado'}[session.status];
     }
     $('#pilot-quota').textContent=$('#pilot-live-quota').textContent=limit==null?String(used):`${used} / ${limit}`;
+    for(const span of ui.querySelectorAll('.pilot-car-stage > div > span,.pilot-track-top > div:last-child > span')){
+      span.textContent=state.practiceBeforeQualifying&&phase==='practice'?'VOLTAS CONCLUÍDAS':'VOLTAS USADAS';
+    }
     $('#pilot-best').textContent=format(best);
     const lastLap=state.history?.findLast(lap=>lap.ms!=null);
     $('#pilot-last').textContent=lastLap?.ms==null?'—':format(lastLap.ms)+(!lastLap.valid?' · inválida':'');
@@ -392,6 +397,8 @@ export function bootPilot({canvas,ctx,world}) {
     }
     $('#pilot-setup').hidden=!driver || !open;
     $('#pilot-driver').textContent=driver?.name ?? '';
+    $('#pilot-practice-progression').hidden=!(state.practiceBeforeQualifying&&phase==='practice');
+    $('#pilot-finish-practice').disabled=saving||!!pending.length;
     $('#pilot-acerto').hidden=!!(race&&lockedSetup)||!canStart||resumable;
     $('#pilot-open-engineer').hidden=phase!=='practice';
     if(phase!=='practice')engineerNote.hidden=true;
@@ -402,7 +409,7 @@ export function bootPilot({canvas,ctx,world}) {
     $('#pilot-race-setup-notice').hidden=!(race&&canStart&&!resumable&&lockedSetup&&qualified);
     const finished=state.history?.filter(lap=>lap.ms!=null) ?? [];
     $('.pilot-start-note').textContent=canStart
-      ? race?'Sua corrida é individual. O resultado geral sai no fim da janela.':'Na volta rápida, você começa antes da última curva. A tentativa conta ao cruzar a linha.'
+      ? race?'Sua corrida é individual. O resultado geral sai no fim da janela.':state.practiceBeforeQualifying&&phase==='practice'?'Só as voltas concluídas contam nas 45 voltas de treino.':'Na volta rápida, você começa antes da última curva. A tentativa conta ao cruzar a linha.'
       : finished.length===limit
         ? race?`Seu tempo oficial foi ${format(finished.reduce((total,lap)=>total+lap.ms,grid?.delay??0))}.`:`Você completou suas ${limit} voltas.`
         : 'Sua saída já foi iniciada. A sessão permite uma saída por piloto.';
@@ -483,11 +490,20 @@ export function bootPilot({canvas,ctx,world}) {
     clearTimeout(retryTimer);
     retryTimer=0;
     saving=true;
+    let practiceFinished=false;
     try {
       while(pending.length){
         const operation=pending[0];
         state=await getState('/lap',operation);
         pending.shift();
+        if(state.practiceBeforeQualifying&&operation.phase==='practice'&&state.phase==='qualifying'){
+          practiceFinished=true;
+          selectedReport='qualifying';
+        }
+        if(car&&state.practiceBeforeQualifying&&operation.phase==='practice'&&state.phase==='qualifying'){
+          leave();
+          message('Treino concluído. Suas 6 voltas rápidas do quali estão disponíveis.');
+        }
         writeLocal(pendingKey,null);
         if(!car&&timed(operation.phase)&&matchesRun(savedRun)&&!pending.length){
           if(state.attemptId)savedRun={...savedRun,attemptId:state.attemptId};
@@ -497,7 +513,7 @@ export function bootPilot({canvas,ctx,world}) {
       }
       if(!car){
         const finished=state.limit!=null&&state.used>=state.limit&&!state.attemptId;
-        message(finished?'Sessão concluída. Seus tempos estão no histórico.':'Voltas sincronizadas.');
+        message(practiceFinished?'Treino concluído. Suas 6 voltas rápidas do quali estão disponíveis.':finished?'Sessão concluída. Seus tempos estão no histórico.':'Voltas sincronizadas.');
         showState();
       }
     } catch(error) {
@@ -743,6 +759,19 @@ export function bootPilot({canvas,ctx,world}) {
     finally{button.disabled=false;}
   };
   $('#pilot-retry').onclick=()=>pending.length||runQueue(savedRun).length?retryLap():refresh();
+  $('#pilot-finish-practice').onclick=async()=>{
+    if(busy||saving||pending.length)return;
+    if(!confirm('Ao ir para o quali, você encerra definitivamente seu treino desta rodada e não poderá voltar para completar as voltas restantes. Deseja continuar?'))return;
+    busy=true;
+    $('#pilot-finish-practice').disabled=true;
+    try{
+      state=await getState('/finish-practice',{confirm:true});
+      latest=null;selectedReport='qualifying';
+      message('Treino encerrado. Você pode iniciar suas 6 voltas rápidas do quali.');
+      showState();
+    }catch(error){message(error.message);}
+    finally{busy=false;$('#pilot-finish-practice').disabled=false;}
+  };
   addEventListener('online',()=>{if(pending.length)saveLap();});
   function exitTrack() {
     if(timed(drivingPhase)){
@@ -878,7 +907,8 @@ export function bootPilot({canvas,ctx,world}) {
             }
           }else if(lap) {
             latest=lap;
-            const nextId=state.limit==null||usedLaps()<state.limit?crypto.randomUUID():null;
+            const consumed=usedLaps()+(state.practiceBeforeQualifying&&drivingPhase==='practice'?1:0);
+            const nextId=state.limit==null||consumed<state.limit?crypto.randomUUID():null;
             let replay;
             if(replayFrames[0]?.[0]===0&&(drivingPhase!=='practice'||lap.ms<=(state.best??Infinity))){
               replay=replayFrames;
@@ -956,12 +986,16 @@ export function bootPilot({canvas,ctx,world}) {
   setInterval(()=>{
     if(car||busy||saving||pending.length||!state)return;
     const now=Date.now();
+    if(!new URLSearchParams(location.search).has('rodada')&&activePilotRound(now).id!==pilotRound.id){
+      location.reload();
+      return;
+    }
     if(state.driver&&!state.replayReady&&now>=Date.parse(state.replayAt)&&now>=replayPollAt){
       replayPollAt=now+5000;
       refresh();
       return;
     }
-    const transition=state.open ? state.closesAt : state.sessions.find(session=>session.status==='upcoming')?.opensAt;
+    const transition=state.open ? state.closesAt : state.sessions.find(session=>session.status==='upcoming'&&!session.gated)?.opensAt;
     if(now>=Date.parse(transition))refresh();
   },1000);
 }

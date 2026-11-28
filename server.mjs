@@ -29,6 +29,9 @@ if (!sqlite.prepare('PRAGMA table_info(practice_drivers)').all().some(c=>c.name=
 if (!sqlite.prepare('PRAGMA table_info(practice_laps)').all().some(c=>c.name==='quota_exempt')) {
   sqlite.exec(await readFile(new URL('drizzle/0005_practice_quota.sql',root),'utf8'));
 }
+if (!sqlite.prepare("SELECT name FROM sqlite_master WHERE name='practice_session_progress'").get()) {
+  sqlite.exec(await readFile(new URL('drizzle/0006_pilot_session_progress.sql',root),'utf8'));
+}
 const DB={prepare(sql){const stmt=sqlite.prepare(sql);return{bind(...args){return{
   first:async()=>stmt.get(...args)??null,
   all:async()=>({results:stmt.all(...args)}),
