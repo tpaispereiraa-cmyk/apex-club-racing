@@ -1,5 +1,5 @@
 import {drawCar} from './car-renderer.js';
-import {at, CIRCUIT, length, W, H} from './track.js';
+import {at, path as trackPath, CIRCUIT, length, W, H} from './track.js';
 import {circuitById} from './circuits.js';
 import {ACTIVE_PILOT_ROUND,PILOT_ROUNDS,activePilotRound,pilotRoundById,pilotRoundUrl} from './pilot-rounds.js';
 import {drsZoneAt} from './track-profile.js';
@@ -71,6 +71,17 @@ function replayPoint(car,ms,progress) {
   return [ms,Math.round(car.x),Math.round(car.y),Math.round(angle*1000),progress];
 }
 
+function circuitPreview() {
+  const xs=trackPath.map(p=>p.x),ys=trackPath.map(p=>p.y);
+  const minX=Math.min(...xs),minY=Math.min(...ys),maxX=Math.max(...xs),maxY=Math.max(...ys);
+  const scale=192/Math.max(maxX-minX,maxY-minY);
+  const x=p=>24+(192-(maxX-minX)*scale)/2+(p.x-minX)*scale;
+  const y=p=>24+(192-(maxY-minY)*scale)/2+(p.y-minY)*scale;
+  const outline=trackPath.map((p,i)=>`${i?'L':'M'}${x(p).toFixed(2)},${y(p).toFixed(2)}`).join(' ')+' Z';
+  const start=at(0),direction=at(180);
+  return `<aside class="pilot-circuit-card" aria-label="Circuito desta rodada"><div><span>O CIRCUITO</span><strong>${CIRCUIT.name}</strong></div><svg viewBox="0 0 240 240" role="img" aria-label="Traçado de ${CIRCUIT.name}, com largada e sentido da volta"><path d="${outline}" fill="none" stroke="#d5f56118" stroke-width="12" stroke-linejoin="round"/><path d="${outline}" fill="none" stroke="#d6e7d8" stroke-width="4" stroke-linejoin="round"/><g transform="translate(${x(start)},${y(start)}) rotate(${start.angle*180/Math.PI})"><path d="M0,-7V7" stroke="#d5f561" stroke-width="4"/></g><g transform="translate(${x(direction)},${y(direction)}) rotate(${direction.angle*180/Math.PI})"><path d="M-4,-4L2,0L-4,4" fill="none" stroke="#d5f561" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/></g></svg><div class="pilot-circuit-caption"><span>${(CIRCUIT.metres/1000).toLocaleString('pt-BR',{minimumFractionDigits:3,maximumFractionDigits:3})} km · ${CIRCUIT.corners} curvas</span><small><i aria-hidden="true"></i>Largada / sentido</small></div></aside>`;
+}
+
 export function bootPilot({canvas,ctx,world}) {
   document.body.classList.add('pilot-mode');
   document.title=`APEX CLUB — ${CIRCUIT.name}`;
@@ -87,7 +98,7 @@ export function bootPilot({canvas,ctx,world}) {
       <div class="pilot-schedule" role="group" aria-label="Sessões do GP"></div>
       <p class="pilot-session-note" id="pilot-session-note"></p>
       <button id="pilot-open-telemetry" type="button" aria-haspopup="dialog" aria-controls="pilot-telemetry"><span class="telemetry-glyph" aria-hidden="true"><i></i><i></i><i></i></span><span><b>Telemetria</b><small>Compare voltas e setores dos pilotos</small></span></button>
-      <div class="pilot-car-stage"><canvas id="pilot-preview" width="480" height="230" role="img" aria-label="Prévia da pintura do seu monoposto"></canvas><div><span>VOLTAS USADAS</span><b id="pilot-quota">—</b></div></div>
+      <div class="pilot-car-overview"><div class="pilot-car-stage"><canvas id="pilot-preview" width="480" height="230" role="img" aria-label="Prévia da pintura do seu monoposto"></canvas><div><span>VOLTAS USADAS</span><b id="pilot-quota">—</b></div></div>${circuitPreview()}</div>
       <dl class="pilot-times"><div><dt>MELHOR VOLTA</dt><dd id="pilot-best">—</dd></div><div><dt>ÚLTIMA VOLTA</dt><dd id="pilot-last">—</dd></div></dl>
       <section id="pilot-history" hidden><h2>Minhas voltas</h2><div></div></section>
       <section id="pilot-results" hidden><h2></h2><p hidden>Nenhum tempo registrado nesta sessão.</p><ol></ol></section></section>

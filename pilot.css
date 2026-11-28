@@ -48,7 +48,16 @@
 .pilot-intro { min-width: 0; }
 .pilot-round-links { display: flex; flex-wrap: wrap; gap: .45rem 1rem; margin: 0 0 .85rem; font-size: .86rem; }
 .pilot-round-links a { color: var(--lime); }
-.pilot-car-stage { margin-top: 1.5rem; border: 1px solid #e2f0e123; background: linear-gradient(115deg,#131e1c,#1d3028); position: relative; overflow: hidden; }
+.pilot-car-overview { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,.7fr); gap: .65rem; margin-top: 1.5rem; }
+.pilot-car-stage { display: flex; align-items: center; min-width: 0; border: 1px solid #e2f0e123; background: linear-gradient(115deg,#131e1c,#1d3028); position: relative; overflow: hidden; }
+.pilot-circuit-card { aspect-ratio: 1; min-width: 0; display: flex; flex-direction: column; padding: .75rem; border: 1px solid #d5f56140; background: radial-gradient(ellipse at center,#24392b,#12211c 80%); }
+.pilot-circuit-card > div:first-child { display: grid; gap: .2rem; }
+.pilot-circuit-card > div:first-child span { font-size: .65rem; letter-spacing: .14em; color: #adbfaf; }
+.pilot-circuit-card strong { font-size: clamp(.9rem,1.3vw,1.15rem); color: #eef5e7; }
+.pilot-circuit-card svg { display: block; flex: 1; min-height: 0; width: 100%; height: 0; }
+.pilot-circuit-caption { display: grid; gap: .3rem; font-size: .7rem; color: #bacdbc; }
+.pilot-circuit-caption small { display: flex; align-items: center; gap: .35rem; font-size: .65rem; }
+.pilot-circuit-caption i { display: inline-block; width: .55rem; height: .2rem; background: var(--lime); }
 .pilot-car-stage canvas { display: block; width: 100%; max-height: 230px; object-fit: contain; }
 .pilot-car-stage > div { position: absolute; top: .8rem; right: 1rem; text-align: right; }
 .pilot-car-stage span { display: block; color: #bdccc0; font-size: .8rem; }
@@ -140,7 +149,8 @@
 .pilot-touch { display: none; }
 @media (max-width: 720px) {
   .pilot-garage { grid-template-columns: 1fr; gap: 1rem; }
-  .pilot-car-stage { margin-top: .65rem; }
+  .pilot-car-overview { margin-top: .65rem; gap: .4rem; }
+  .pilot-circuit-card { padding: .5rem; }
   .pilot-car-stage canvas { max-height: 160px; }
 }
 @media (pointer: coarse) {
