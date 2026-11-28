@@ -10,13 +10,20 @@ for(let s=0;s<length;s+=STEP){
 }
 export function sectionAt(s){return profile[Math.floor(mod(s,length)/STEP)]||profile[0];}
 const distanceTo=p=>{const q=project(p);return nearest(q.x,q.y).s;};
-// Two arcade DRS zones fitted to the straights of this hand-traced Interlagos.
+// Find each straight once, including one that crosses the timing line.
 function straightZones(){
+  const count=Math.ceil(length/STEP),step=length/count;
+  const straight=Array.from({length:count},(_,i)=>Math.abs(angleDelta(at(i*step-100).angle,at(i*step+100).angle))<.13);
+  const anchor=straight.findIndex(value=>!value);
+  if(anchor<0)return [];
   const runs=[];let start=null;
-  // Walk two laps to include the main straight across the timing line.
-  for(let s=0;s<=length*2;s+=STEP){const a=at(s-100),b=at(s+100),straight=Math.abs(angleDelta(b.angle,a.angle))<.13;
-    if(straight&&start===null)start=s;
-    if(!straight&&start!==null){if(s-start>450&&start<length)runs.push({start:mod(start+75,length),end:mod(s-75,length),distance:s-start});start=null;}
+  for(let i=1;i<=count;i++){
+    const s=(anchor+i)*step;
+    if(straight[(anchor+i)%count]){if(start===null)start=s;}
+    else if(start!==null){
+      if(s-start>450)runs.push({start:mod(start+75,length),end:mod(s-75,length),distance:s-start});
+      start=null;
+    }
   }
   return runs.sort((a,b)=>b.distance-a.distance).slice(0,2).map((r,i)=>({name:`Reta DRS ${i+1}`,start:r.start,end:r.end}));
 }

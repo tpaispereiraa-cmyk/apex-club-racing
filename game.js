@@ -3,7 +3,7 @@ import {bootSpectator} from './spectator.js';
 import {TEAMS} from './teams.js';
 import {CAR_LENGTH,CAR_WIDTH,GRID_SPACING} from './vehicle-geometry.js';
 import {PIT_LAYOUT,pitPoint,garagePose} from './pit-layout.js';
-import {W,H,ROAD,mod,clamp,path,length,at,nearest,landmarks,CIRCUIT,BRIDGES} from './track.js';
+import {W,H,ROAD,CURB,mod,clamp,path,length,at,nearest,landmarks,CIRCUIT,BRIDGES} from './track.js';
 import {setupCircuits} from './circuit-picker.js';
 import {parseRoute} from './routes.js';
 const canvas=document.querySelector('#game'),ctx=canvas.getContext('2d');
@@ -13,8 +13,7 @@ const world=document.createElement('canvas'),rasterScale=Math.min(1,Math.sqrt(18
 function line(c,width,color){c.beginPath();path.forEach((p,i)=>i?c.lineTo(p.x,p.y):c.moveTo(p.x,p.y));c.closePath();c.lineJoin='round';c.lineWidth=width;c.strokeStyle=color;c.stroke();}
 function tree(x,y,r){g.fillStyle='#0b1b1245';g.beginPath();g.ellipse(x+13,y+19,r*1.1,r*.8,0,0,TAU);g.fill();for(let i=0;i<9;i++){let a=rnd()*TAU,rr=r*(.35+rnd()*.5);g.fillStyle=['#25432b','#345536','#3c603c','#496c40'][i%4];g.beginPath();g.arc(x+Math.cos(a)*r*.45,y+Math.sin(a)*r*.45,rr,0,TAU);g.fill();}g.fillStyle='#63834c60';g.beginPath();g.arc(x-5,y-7,r*.35,0,TAU);g.fill();}
 function building(x,y,w,h){g.fillStyle='#0a19134d';g.fillRect(x+12,y+17,w,h);g.fillStyle='#a5aaa3';g.fillRect(x,y,w,h);g.fillStyle='#d0d2c9';g.fillRect(x,y,w,h-9);g.strokeStyle='#8b958b';g.lineWidth=1;for(let k=x+8;k<x+w;k+=12){g.beginPath();g.moveTo(k,y);g.lineTo(k,y+h-10);g.stroke();}g.fillStyle='#727f77';g.fillRect(x+12,y+12,30,h-30);}
-function makeWorld(){g.fillStyle=CIRCUIT.theme==='dry'?'#817950':CIRCUIT.theme==='urban'?'#536165':CIRCUIT.theme==='island'||CIRCUIT.theme==='lake'?'#486e76':'#526747';g.fillRect(0,0,W,H);for(let i=0;i<225000;i++){g.fillStyle=rnd()>.5?'#adc17a13':'#172e1a16';g.fillRect(rnd()*W,rnd()*H,rnd()*4+1,rnd()*3+1);}line(g,ROAD+105,'#8b967c');line(g,ROAD+75,'#a9a789');for(let i=0;i<9500;i++){let p=at(rnd()*length,(rnd()>.5?1:-1)*(65+rnd()*25));g.fillStyle='#9e987e30';g.fillRect(p.x,p.y,3,2);}line(g,ROAD+17,'#e9e9d6');line(g,ROAD+10,'#d4b93e');g.save();g.setLineDash([18,36]);line(g,ROAD+10,'#e7e7d9');g.setLineDash([18,36]);g.lineDashOffset=18;line(g,ROAD+10,'#498266');g.restore();line(g,ROAD,'#626866');line(g,ROAD-8,'#666b68');
-g.save();g.globalAlpha=.2;for(let offset of [-27,28]){g.beginPath();for(let s=0;s<length;s+=6){let p=at(s,offset);s?g.lineTo(p.x,p.y):g.moveTo(p.x,p.y);}g.closePath();g.lineWidth=12;g.strokeStyle='#343c39';g.stroke();}g.restore();
+function makeWorld(){g.fillStyle=CIRCUIT.theme==='dry'?'#817950':CIRCUIT.theme==='urban'?'#536165':CIRCUIT.theme==='island'||CIRCUIT.theme==='lake'?'#486e76':'#526747';g.fillRect(0,0,W,H);for(let i=0;i<225000;i++){g.fillStyle=rnd()>.5?'#adc17a13':'#172e1a16';g.fillRect(rnd()*W,rnd()*H,rnd()*4+1,rnd()*3+1);}line(g,ROAD+105,'#8b967c');line(g,ROAD+75,'#a9a789');for(let i=0;i<9500;i++){let p=at(rnd()*length,(rnd()>.5?1:-1)*(65+rnd()*25));g.fillStyle='#9e987e30';g.fillRect(p.x,p.y,3,2);}line(g,ROAD+CURB*2+5,'#e9e9d6');line(g,ROAD+CURB*2,'#d4b93e');g.save();g.setLineDash([18,36]);line(g,ROAD+CURB*2,'#e7e7d9');g.setLineDash([18,36]);g.lineDashOffset=18;line(g,ROAD+CURB*2,'#498266');g.restore();line(g,ROAD,'#626866');line(g,ROAD-8,'#666b68');
 for(let i=0;i<26000;i++){let p=at(rnd()*length,(rnd()-.5)*(ROAD-10));g.fillStyle=rnd()>.5?'#ffffff08':'#0c19140a';g.fillRect(p.x,p.y,2,2);}
 for(let side of [-1,1]){g.beginPath();for(let s=0;s<length;s+=8){let p=at(s,side*111);s?g.lineTo(p.x,p.y):g.moveTo(p.x,p.y);}g.closePath();g.lineWidth=7;g.strokeStyle='#394b3e';g.stroke();g.lineWidth=3;g.strokeStyle='#a0aaa0';g.stroke();}
 // Pit lane follows the inside of the actual main straight.

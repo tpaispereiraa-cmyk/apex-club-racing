@@ -7,6 +7,7 @@ export const clamp=(v,a,b)=>Math.max(a,Math.min(b,v));
 const geometry=CIRCUIT.id==='interlagos'?interlagos:makeGeometry(CIRCUIT);
 export const {W,H,path,length,at,nearest,nodes}=geometry;
 export const ROAD=CIRCUIT.id==='monaco'?78:104;
+export const CURB=12;
 export const project=interlagos.project;
 export const landmarks=CIRCUIT.id==='interlagos'?interlagos.landmarks:[];
 // Suzuka's crossing has two separate road levels. Nearby cars on the other

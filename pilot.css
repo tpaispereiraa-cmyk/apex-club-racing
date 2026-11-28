@@ -132,8 +132,54 @@
 }
 @media (pointer: coarse) {
   .pilot-track-bottom { bottom: 5rem; }
-  .pilot-touch { display: flex; position: absolute; bottom: .7rem; left: .7rem; right: .7rem; gap: .4rem; justify-content: space-between; touch-action: none; }
-  .pilot-touch button { min-height: 2.8rem; flex: 1; color: #fff; background: #182923ec; border: 1px solid #bbcdb980; touch-action: none; }
+}
+#pilot[data-touch-controls=true] .pilot-touch { display: flex; position: absolute; bottom: calc(.7rem + env(safe-area-inset-bottom)); left: .7rem; right: .7rem; gap: .4rem; justify-content: space-between; align-items: end; touch-action: none; }
+.pilot-touch button { min-height: 2.8rem; color: #fff; background: #182923ec; border: 1px solid #bbcdb980; touch-action: none; }
+#pilot[data-touch-controls=true] .pilot-track-bottom { bottom: calc(var(--pilot-touch-size,60px) + 1.6rem + env(safe-area-inset-bottom)); }
+.pilot-options canvas { display: block; width: 100%; height: 10rem; object-fit: cover; border: 1px solid #c9dac44d; }
+.pilot-options section { padding-top: .7rem; border-bottom: 1px solid #c9dac433; padding-bottom: .8rem; }
+.pilot-options section h3 { margin: .3rem 0 .5rem; }
+.pilot-options section > label { display: flex; align-items: center; gap: .65rem; margin: .6rem 0; flex-wrap: wrap; }
+.pilot-options input[type=range] { flex: 1; min-width: 7rem; accent-color: var(--lime); }
+.pilot-options input[type=checkbox] { accent-color: var(--lime); width: 1.2rem; height: 1.2rem; }
+.pilot-options select, .pilot-options section button { padding: .65rem; font: inherit; border: 1px solid #c9dac44d; color: #ecf3e5; background: #192d23; }
+.pilot-options p { color: #c0d1c0; line-height: 1.5; }
+.pilot-key-bindings { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
+.pilot-key-bindings button { display: flex; justify-content: space-between; align-items: center; gap: .5rem; text-align: left; }
+.pilot-key-bindings kbd { color: var(--lime); }
+.pilot-camera-actions { position: absolute; right: clamp(.75rem,4vw,3rem); top: 13rem; display: flex; gap: .3rem; pointer-events: auto; }
+.pilot-camera-actions button { min-height: 2.5rem; min-width: 2.5rem; padding: .4rem .6rem; font: inherit; color: #ecf3e5; background: #101e19ee; border: 1px solid #e1efdc45; }
+.pilot-rotate-hint { display: none; }
+#pilot-ghost-status { position: absolute; top: 13rem; left: clamp(.75rem,4vw,3rem); max-width: min(65vw,28rem); font-size: .8rem; padding: .5rem .6rem; color: #dfecdc; background: #101e19ee; border: 1px solid #e1efdc45; }
+#pilot-ghost-status[data-trend=gain] { color: var(--lime); }
+#pilot-ghost-status[data-trend=loss] { color: #ffb78c; }
+.pilot-steer { position: relative; width: calc(var(--pilot-touch-size,60px)*2.2); height: var(--pilot-touch-size,60px); border: 1px solid #d5f56188; border-radius: 2rem; background: #15221ee8; touch-action: none; user-select: none; }
+.pilot-steer::before { content: '◀  DIREÇÃO  ▶'; position: absolute; inset: 0; display: grid; place-items: center; color: #d5f561bb; font-size: .7rem; }
+.pilot-steer span { position: absolute; top: 8%; left: calc(35% + var(--steer,0)*32%); width: 30%; height: 84%; border-radius: 50%; background: #d5f56166; border: 1px solid #d5f561; }
+.pilot-pedals { display: flex; gap: .5rem; }
+.pilot-pedals button { height: var(--pilot-touch-size,60px); min-width: var(--pilot-touch-size,60px); border-radius: .7rem; font-size: .9rem; user-select: none; }
+.pilot-pedals button[data-pressed=true], .pilot-pedals button[data-active=true] { color: #15221e; background: var(--lime); }
+#pilot[data-left-handed=true] .pilot-touch { flex-direction: row-reverse; }
+@media (pointer: coarse) {
+  body.pilot-mode { touch-action: none; }
+  .pilot-garage, .pilot-options { touch-action: pan-y; }
+  .pilot-track-bottom { bottom: calc(var(--pilot-touch-size,60px) + 1.6rem + env(safe-area-inset-bottom)); }
+  .pilot-touch { bottom: calc(.7rem + env(safe-area-inset-bottom)); align-items: end; }
+}
+@media (pointer: coarse) and (orientation: portrait) {
+  .pilot-rotate-hint { display: block; position: absolute; top: 52%; left: 10%; right: 10%; padding: .7rem; text-align: center; color: var(--lime); background: #101e19ee; pointer-events: none; }
+}
+@media (max-height: 520px) {
+  .pilot-nav { padding: .4rem .8rem; }
+  .pilot-track-top { top: .4rem; left: .6rem; right: .6rem; }
+  .pilot-track-top strong { font-size: 1.2rem; }
+  #pilot-radio { top: 4.2rem; font-size: .75rem; padding: .3rem .5rem; left: .6rem; }
+  .pilot-splits { top: 6.8rem; left: .6rem; font-size: .75rem; padding: .4rem; }
+  #pilot-ghost-status { top: 10rem; left: .6rem; font-size: .7rem; }
+  .pilot-camera-actions { top: 6.3rem; right: .6rem; }
+  #pilot-top-laps { display: none; }
+  .pilot-speed strong { font-size: 1.6rem; }
+  .pilot-speed span { display: block; font-size: .65rem; }
 }
 .lap-history-wrap { overflow-x: auto; }
 .lap-history-table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; font-size: .82rem; text-align: right; }

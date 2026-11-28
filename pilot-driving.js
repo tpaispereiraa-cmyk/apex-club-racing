@@ -1,10 +1,11 @@
-import {at, nearest, mod, clamp, length, ROAD, CIRCUIT} from './track.js';
+import {at, nearest, mod, clamp, length, ROAD, CURB, CIRCUIT} from './track.js';
 import {PIT_LAYOUT, pitPoint} from './pit-layout.js';
-import {drsZoneAt, FLYING_START} from './track-profile.js';
+import {FLYING_START} from './track-profile.js';
 import {createCareer} from './manager/career.js';
 import {defaultSetup, deriveCar, SETUP} from './manager/model.js';
 import {physicalForces, unitAdapter} from './manager/race-control.js';
 import {GRID_SPACING} from './vehicle-geometry.js';
+import {updatePilotDRS} from './pilot-drs.js';
 
 export const PILOT_SETUP = ['frontWing','rearWing','antiRoll','brakeBias','rideHeight'];
 export const PRESETS = {
@@ -110,8 +111,9 @@ export function stepPilot(car, keys) {
     if(!keys.s)keys={...keys,w:true};
   }
   car.elapsed += fixedStep;
+  const throttle=clamp(Number(keys.w||0),0,1),braking=clamp(Number(keys.s||0),0,1);
   if (car.pit) {
-    const goal = keys.w && !keys.s ? 22 : 0;
+    const goal = throttle && !braking ? 22*throttle : 0;
     car.v += clamp(goal-car.v,-25*fixedStep,13*fixedStep);
     car.s += units.toWorld(car.v)*fixedStep;
     Object.assign(car,pitPoint(car.s));
@@ -124,18 +126,18 @@ export function stepPilot(car, keys) {
     }
     return null;
   }
-  const input = Number(!!keys.d)-Number(!!keys.a);
+  const input = clamp(Number(keys.d||0)-Number(keys.a||0),-1,1);
   const {model} = car;
   car.steer += (input-car.steer)*fixedStep*(input?9+model.balance*2:15);
-  car.drs = !!keys.e && !!keys.w && !keys.s && !car.off && car.spin===0 && drsZoneAt(car.s)>=0;
+  car.drs = updatePilotDRS(car,keys);
   const forces = physicalForces(model,car.v,0,car.drs);
   const brake = 29+model.braking*.12;
-  const lateral = model.mechanicalGrip * (18+forces.load/forces.mass) * (car.off?.43:1);
+  const lateral = model.mechanicalGrip * (18+forces.load/forces.mass) * (car.off?.43:car.curb?.9:1);
   const yaw = Math.min(car.v*.13,2.35,lateral/Math.max(11,car.v));
   const steerLoad = Math.abs(car.steer)*yaw*car.v/Math.max(1,lateral);
   const grip = clamp(.98-model.balance*.22+model.clA*.018,.82,1.22);
   const speedLoad=.75+car.v/190+Math.max(0,car.v-65)*.014;
-  const demand = Math.hypot(steerLoad*speedLoad, keys.s?.92:keys.w?.24:0)/grip;
+  const demand = Math.hypot(steerLoad*speedLoad, braking?braking*.92:throttle*.24)/grip;
   car.locked=!!keys.s&&car.v>24&&demand>1.14;
   const excess = car.v<26 ? 0 : Math.max(0,demand-1.08);
   car.instability=clamp(car.instability+fixedStep*(excess*6.5-(excess>0?.14:1.25)),0,1);
@@ -146,7 +148,7 @@ export function stepPilot(car, keys) {
     car.drs=false;
   }
   const spinning=car.spin>0;
-  const accel = ((keys.w&&!keys.s&&!spinning?forces.drive:0)-forces.drag)/forces.mass-.31-(keys.s?brake*(car.locked?.68:1):0);
+  const accel = ((throttle&&!braking&&!spinning?forces.drive*throttle:0)-forces.drag)/forces.mass-.31-braking*brake*(car.locked?.68:1);
   car.v = clamp(car.v+accel*fixedStep,0,115);
   if (car.off) car.v *= 1-fixedStep*1.3;
   const turnAuthority = clamp(1+model.balance*.17,.78,1.22);
@@ -164,7 +166,8 @@ export function stepPilot(car, keys) {
   car.x += Math.cos(car.angle+car.slip)*movement;
   car.y += Math.sin(car.angle+car.slip)*movement;
   const p = nearest(car.x,car.y);
-  car.off = p.d>ROAD*.5;
+  car.curb=p.d>ROAD*.5&&p.d<=ROAD*.5+CURB;
+  car.off = p.d>ROAD*.5+CURB;
   const maxDelta=Math.max(20,movement*2.15);
   let delta=trackDelta(car.s,p.s);
   if(p.d>ROAD*1.45)return null;

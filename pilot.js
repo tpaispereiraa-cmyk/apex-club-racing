@@ -3,6 +3,10 @@ import {at, CIRCUIT, length, W, H} from './track.js';
 import {circuitById} from './circuits.js';
 import {ACTIVE_PILOT_ROUND,PILOT_ROUNDS,pilotRoundById,pilotRoundUrl} from './pilot-rounds.js';
 import {drsZoneAt} from './track-profile.js';
+import {distanceToDRS} from './pilot-drs.js';
+import {drawPilotGuides} from './pilot-track-guide.js';
+import {addPilotOptions} from './pilot-options.js';
+import {createPilotGhost} from './pilot-ghost.js';
 import {sectorDelta, SECTOR_COLORS} from './sector-timing.js';
 import {createRacingAudio} from './racing-audio.js';
 import {fastestLaps, lapHistoryTable, pilotLapRows} from './lap-history.js';
@@ -65,7 +69,7 @@ export function bootPilot({canvas,ctx,world}) {
   const ui=document.createElement('section');
   ui.id='pilot';
   ui.innerHTML=`
-    <nav class="pilot-nav"><a href="/" aria-label="Voltar ao APEX CLUB"><strong>A</strong> APEX CLUB</a><span>${CIRCUIT.name.toUpperCase()} / PILOTAR</span><button id="pilot-sound" class="icon-button" aria-pressed="false">SOM OFF</button></nav>
+    <nav class="pilot-nav"><a href="/" aria-label="Voltar ao APEX CLUB"><strong>A</strong> APEX CLUB</a><span>${CIRCUIT.name.toUpperCase()} / PILOTAR</span><div><button id="pilot-open-options" class="icon-button" type="button" aria-haspopup="dialog">PILOTAGEM</button><button id="pilot-sound" class="icon-button" aria-pressed="false">SOM OFF</button></div></nav>
     <button type="button" id="pilot-replay-banner" hidden><strong>Assista a corrida</strong><span>Replay · ${CIRCUIT.name} →</span></button>
     <div class="pilot-garage">
       <section class="pilot-intro"><span class="pilot-kicker">GP · ${CIRCUIT.name.toUpperCase()}</span><h1>Treino <em>livre.</em></h1><p id="pilot-deadline">Consultando o cronograma…</p>
@@ -103,7 +107,7 @@ export function bootPilot({canvas,ctx,world}) {
         <button class="pilot-button" id="pilot-warmup" hidden>Treinar</button>
         <p class="pilot-start-note"></p>
         <button type="button" id="pilot-sync-pause" hidden>Sincronizar pausa</button>
-        <p class="pilot-controls"><kbd>W</kbd> acelerar <kbd>A</kbd><kbd>D</kbd> virar <kbd>S</kbd> frear <kbd>E</kbd> DRS · Scroll para ajustar o zoom</p></div>
+        <p class="pilot-controls">Configure as teclas, câmera e fantasma em Pilotagem. Use o scroll ou os botões + e − para ajustar a visão.</p></div>
         <details id="pilot-saved-setups" hidden><summary>Configurações salvas</summary>
           <div class="pilot-load-setup"><label>Meus acertos<select></select></label><button type="button" id="pilot-load-setup" disabled>Carregar</button></div>
           <form><label>Nome da configuração<input name="name" maxlength="40" required placeholder="Ex.: Red Bull Ring - Qualy"></label>
@@ -121,11 +125,14 @@ export function bootPilot({canvas,ctx,world}) {
       <div id="pilot-resume-countdown" role="status" aria-atomic="true" hidden><span>RETOMANDO SESSÃO</span><strong>3</strong></div>
       <div class="pilot-track-top"><div><span id="pilot-phase">PISTA</span><strong id="pilot-live-time">—</strong></div><div><span>VOLTAS USADAS</span><strong id="pilot-live-quota">—</strong><small id="pilot-lap-sync" hidden>Sincronizando…</small></div></div>
       <p id="pilot-radio" role="status"></p>
+      <p id="pilot-ghost-status" hidden></p>
+      <div class="pilot-camera-actions"><button type="button" data-zoom="-1" aria-label="Afastar câmera">−</button><button type="button" data-zoom="1" aria-label="Aproximar câmera">+</button><button type="button" data-fullscreen>Tela cheia</button></div>
+      <p class="pilot-rotate-hint">Vire o celular para jogar deitado.</p>
       <div id="pilot-grid-signal" role="status" hidden><i aria-hidden="true"></i><strong></strong></div>
       <aside id="pilot-top-laps" class="live-top-laps" hidden><b>MINHAS 3 MELHORES</b><ol></ol></aside>
       <div class="pilot-splits"><span>Δ VS. SUA MELHOR VOLTA</span><div>${SECTOR_COLORS.map((color,i)=>`<div><b style="color:${color}">S${i+1}</b><output>—</output></div>`).join('')}</div></div>
       <div class="pilot-track-bottom"><div class="pilot-drive-actions"><button data-action="garage">Voltar à garagem</button><button data-action="recover">Reposicionar</button></div><div class="pilot-speed"><b id="pilot-gear">N</b><strong>0</strong> km/h <span>DRS</span></div></div>
-      <div class="pilot-touch" aria-label="Controles de pilotagem">${[['a','◀'],['d','▶'],['e','DRS'],['s','Freio'],['w','Acelerar']].map(([k,label])=>`<button data-key="${k}">${label}</button>`).join('')}</div>
+      <div class="pilot-touch" aria-label="Controles de pilotagem"><div class="pilot-steer" role="slider" aria-label="Direção" aria-valuemin="-100" aria-valuemax="100" aria-valuenow="0" tabindex="0"><span></span></div><div class="pilot-pedals">${[['e','DRS'],['s','Freio'],['w','Acelerar']].map(([k,label])=>`<button data-key="${k}">${label}</button>`).join('')}</div></div>
     </section>`;
   document.body.append(ui);
   const $ = id => ui.querySelector(id);
@@ -174,6 +181,21 @@ export function bootPilot({canvas,ctx,world}) {
   });
   let last=0, accumulator=0, camera=null, width=0, height=0, density=1, zoomFactor=1;
   let resumeAt=null;
+  let analogue=0,steerPointer=null,lastDrsAvailable=false;
+  let previousPad={};
+  const ghost=createPilotGhost(ui,getState);
+  const controls=addPilotOptions(ui,{
+    onChange:prefs=>{zoomFactor=prefs.zoom;},
+    paintPreview:(preview,zoom)=>{
+      const g=preview.getContext('2d'),p=car??at(length*.93),scale=.68*zoom;
+      g.setTransform(1,0,0,1,0,0);g.clearRect(0,0,preview.width,preview.height);
+      g.save();g.translate(preview.width/2,preview.height/2);g.scale(scale,scale);g.translate(-p.x,-p.y);
+      const textureScale=Math.min(1,Math.sqrt(18000000/(W*H)));
+      g.drawImage(world,0,0,world.width,world.height,0,0,world.width/textureScale,world.height/textureScale);
+      drawCar(g,car??{...makePilotCar(setup,'#d5f561'),...p});
+      g.restore();
+    }
+  });
   const elapsed = ()=>car?.start == null ? null : Math.round((car.elapsed-car.start)*1000);
   const message = value => {$('.pilot-message').textContent=value;};
   const radio = value => {$('#pilot-radio').textContent=value;};
@@ -262,7 +284,7 @@ export function bootPilot({canvas,ctx,world}) {
 
   function syncSetup() {
     for (const b of ui.querySelectorAll('[data-preset]')) b.setAttribute('aria-pressed',String(b.dataset.preset===preset));
-    for (const input of ui.querySelectorAll('input[type=range]')) {
+    for (const input of ui.querySelectorAll('#pilot-setup input[type=range]')) {
       input.value=setup[input.name];
       input.parentElement.querySelector('output').value=input.value;
     }
@@ -434,6 +456,9 @@ export function bootPilot({canvas,ctx,world}) {
     clearResumeCountdown();
     attemptId=null;
     keys.clear(); touches.clear();
+    analogue=0;steerPointer=null;ghost.clear();
+    $('.pilot-steer').style.setProperty('--steer',0);
+    $('#pilot-open-options').disabled=false;
     last=0; accumulator=0; showState();
     if(!saving&&!pending.length)unlockRun();
   }
@@ -659,11 +684,13 @@ export function bootPilot({canvas,ctx,world}) {
       showState();
       if(mode==='resume'){
         if(!canResume(savedRun)||runQueue(savedRun).length)return;
-        ({car,attemptId,phase:drivingPhase,setup:runSetup,latest,camera,zoomFactor}=savedRun);
+        ({car,attemptId,phase:drivingPhase,setup:runSetup,latest,camera}=savedRun);
         replayFrames=savedRun.replayFrames??[];
         selectedReport=drivingPhase;
+        ghost.load(controls.prefs.ghost,drivingPhase);
         last=0;accumulator=0;
         garage.hidden=true;track.hidden=false;
+        $('#pilot-open-options').disabled=true;
         resumeAt=performance.now()+3000;
         resumeNumber.textContent='3';
         resumeCountdown.hidden=false;
@@ -682,6 +709,7 @@ export function bootPilot({canvas,ctx,world}) {
         if(!state.canStart||(mode==='grid')!==(state.phase==='race'))return;
       }
       drivingPhase=training?'warmup':state.phase;
+      ghost.load(controls.prefs.ghost,training?'practice':drivingPhase);
       selectedReport=state.phase;
       runSetup={...(drivingPhase==='race'?state.lockedSetup??setup:setup)};
       car=makePilotCar(runSetup,training?liveryDraft??state.driver.livery:state.driver.livery,
@@ -689,6 +717,7 @@ export function bootPilot({canvas,ctx,world}) {
       replayFrames=[];
       camera=null;accumulator=0;last=0;latest=null;
       garage.hidden=true;track.hidden=false;
+      $('#pilot-open-options').disabled=true;
       track.querySelector('[data-action=garage]').textContent=timed(drivingPhase)?'Pausar':'Voltar à garagem';
       checkpoint();
       if(training){
@@ -726,19 +755,23 @@ export function bootPilot({canvas,ctx,world}) {
     leave();
   }
   track.addEventListener('click',e=>{
+    const zoom=e.target.closest('[data-zoom]');
+    if(zoom)controls.setZoom(zoomFactor+Number(zoom.dataset.zoom)*.1);
+    if(e.target.closest('[data-fullscreen]'))document.documentElement.requestFullscreen?.().catch(()=>radio('Tela cheia indisponível neste navegador.'));
     if(e.target.dataset.action==='garage')exitTrack();
     if(e.target.dataset.action==='recover' && car && !car.pit && !car.gridRed && resumeAt===null)recoverPilot(car);
   });
-  const drivingKey=key=>({ArrowUp:'w',ArrowLeft:'a',ArrowDown:'s',ArrowRight:'d'}[key]??key.toLowerCase());
   addEventListener('keydown',e=>{
-    const key=drivingKey(e.key);
-    if(!car) return;
-    if(key==='escape'&&!e.repeat){exitTrack();return;}
-    if(!'wasde'.includes(key)||key.length!==1||e.ctrlKey||e.altKey||e.metaKey)return;
-    e.preventDefault();keys.add(key);
+    if(!car||e.ctrlKey||e.altKey||e.metaKey||ui.querySelector('dialog[open]'))return;
+    const key=controls.action(e);
+    if(!key)return;
+    e.preventDefault();
+    if(key==='pause'){if(!e.repeat)exitTrack();return;}
+    if(key==='zoomIn'||key==='zoomOut'){controls.setZoom(zoomFactor+(key==='zoomIn'?.1:-.1));return;}
+    keys.add(key);
   });
-  addEventListener('keyup',e=>keys.delete(drivingKey(e.key)));
-  addEventListener('blur',()=>{keys.clear();touches.clear();});
+  addEventListener('keyup',e=>keys.delete(controls.action(e)));
+  addEventListener('blur',()=>{keys.clear();touches.clear();analogue=0;});
   addEventListener('pagehide',()=>{if(car&&checkpoint(true))syncPausedRun(false);});
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden&&car&&timed(drivingPhase))exitTrack();
@@ -746,21 +779,41 @@ export function bootPilot({canvas,ctx,world}) {
   addEventListener('wheel',e=>{
     if(!car||e.ctrlKey)return;
     e.preventDefault();
-    zoomFactor=Math.max(.65,Math.min(1.7,zoomFactor*Math.exp(-Math.sign(e.deltaY)*.12)));
+    controls.setZoom(zoomFactor*Math.exp(-Math.sign(e.deltaY)*.12));
   },{passive:false});
   track.addEventListener('pointerdown',e=>{
     const b=e.target.closest('[data-key]');
-    if(b){e.preventDefault();b.setPointerCapture(e.pointerId);touches.set(e.pointerId,b.dataset.key);}
+    if(b){e.preventDefault();b.setPointerCapture(e.pointerId);touches.set(e.pointerId,b.dataset.key);b.dataset.pressed='true';}
   });
-  for(const type of ['pointerup','pointercancel','lostpointercapture']) track.addEventListener(type,e=>touches.delete(e.pointerId));
+  for(const type of ['pointerup','pointercancel','lostpointercapture']) track.addEventListener(type,e=>{
+    touches.delete(e.pointerId);
+    const b=e.target.closest('[data-key]');
+    if(b)b.dataset.pressed=String([...touches.values()].includes(b.dataset.key));
+  });
+  const steering=$('.pilot-steer');
+  function steerAt(event){
+    const rect=steering.getBoundingClientRect();
+    analogue=Math.max(-1,Math.min(1,(event.clientX-rect.left-rect.width/2)/(rect.width*.4)));
+    steering.style.setProperty('--steer',analogue);
+    steering.setAttribute('aria-valuenow',String(Math.round(analogue*100)));
+  }
+  steering.onpointerdown=event=>{
+    if(steerPointer!==null)return;
+    event.preventDefault();steerPointer=event.pointerId;steering.setPointerCapture(event.pointerId);steerAt(event);
+  };
+  steering.onpointermove=event=>{if(event.pointerId===steerPointer)steerAt(event);};
+  for(const type of ['pointerup','pointercancel','lostpointercapture'])steering.addEventListener(type,event=>{
+    if(event.pointerId!==steerPointer)return;
+    steerPointer=null;analogue=0;steering.style.setProperty('--steer',0);steering.setAttribute('aria-valuenow','0');
+  });
 
   function resize() {
-    width=innerWidth;height=innerHeight;density=Math.min(2,devicePixelRatio||1);
+    width=innerWidth;height=innerHeight;density=Math.min(matchMedia('(pointer: coarse)').matches?1.25:2,devicePixelRatio||1);
     canvas.width=Math.round(width*density);canvas.height=Math.round(height*density);
   }
   function paint(target) {
     const zoom=(width<620?.52:.68)*zoomFactor;
-    const look = car && !car.pit ? 86+car.v*2.25 : 60;
+    const look = Math.min(car&&!car.pit?86+car.v*2.25:60,height*.24/zoom);
     const x=target.x+Math.cos(target.angle)*look,y=target.y+Math.sin(target.angle)*look;
     if(!camera)camera={x,y};
     camera.x+=(x-camera.x)*.15;camera.y+=(y-camera.y)*.15;
@@ -768,6 +821,8 @@ export function bootPilot({canvas,ctx,world}) {
     ctx.fillStyle='#24392b';ctx.fillRect(0,0,width,height);
     ctx.save();ctx.translate(width/2,height/2);ctx.scale(zoom,zoom);ctx.translate(-camera.x,-camera.y);
     ctx.drawImage(world,0,0,world.width,world.height,0,0,world.width/targetTextureScale,world.height/targetTextureScale);
+    drawPilotGuides(ctx,{line:controls.prefs.line,drs:controls.prefs.drsZones});
+    ghost.draw(ctx,car,controls.prefs.opacity,controls.prefs.ghost!=='off');
     if(car)drawCar(ctx,car,{player:true});
     ctx.restore();
   }
@@ -777,6 +832,13 @@ export function bootPilot({canvas,ctx,world}) {
     requestAnimationFrame(frame);
     const dt=last?Math.min(.1,(now-last)/1000):0;
     last=now;
+    const pad=controls.pollGamepad();
+    if(car){
+      if(pad.pause>.5&&!(previousPad.pause>.5))exitTrack();
+      if(pad.zoomIn>.5&&!(previousPad.zoomIn>.5))controls.setZoom(zoomFactor+.1);
+      if(pad.zoomOut>.5&&!(previousPad.zoomOut>.5))controls.setZoom(zoomFactor-.1);
+    }
+    previousPad=pad;
     if(car) {
       if(Date.now()>=Date.parse(state.closesAt)){
         if(timed(drivingPhase)&&!pending.length)clearRun();
@@ -794,6 +856,12 @@ export function bootPilot({canvas,ctx,world}) {
         accumulator+=dt;
         const pressed=new Set([...keys,...touches.values()]);
         const input=Object.fromEntries([...pressed].map(key=>[key,true]));
+        input.a=Math.max(Number(input.a||0),-analogue,pad.a);
+        input.d=Math.max(Number(input.d||0),analogue,pad.d);
+        input.w=Math.max(Number(input.w||0),pad.w);
+        input.s=Math.max(Number(input.s||0),pad.s);
+        input.e=!!input.e||pad.e>.5;
+        input.drsToggle=controls.prefs.drsMode==='toggle';
         while(car&&accumulator>=PILOT_STEP) {
           accumulator-=PILOT_STEP;
           const before=car.start;
@@ -856,8 +924,8 @@ export function bootPilot({canvas,ctx,world}) {
         $('#pilot-phase').textContent=drivingPhase==='warmup'?'AQUECIMENTO':car.pit?'PIT LANE':car.start!==null?(drivingPhase==='race'?'VOLTA DE CORRIDA':'VOLTA RÁPIDA'):car.startMode==='grid'?'LARGADA':car.startMode==='flying'?'APROXIMAÇÃO':'VOLTA DE SAÍDA';
         $('#pilot-live-time').textContent=format(elapsed());
         $('.pilot-speed strong').textContent=Math.round(car.v*3.6);
-        const brake=!resuming&&(keys.has('s')||[...touches.values()].includes('s'));
-        const throttle=!resuming&&!red&&!brake&&(green||keys.has('w')||[...touches.values()].includes('w'))?1:0;
+        const brake=!resuming&&(keys.has('s')||[...touches.values()].includes('s')||pad.s>.03);
+        const throttle=!resuming&&!red&&!brake?Math.max(Number(green||keys.has('w')||[...touches.values()].includes('w')),pad.w):0;
         const revs=racingAudio.update({active:!document.hidden,speed:car.v,throttle,braking:brake});
         $('#pilot-gear').textContent=car.v<.4&&!throttle?'N':revs.gear;
         for(const [i,output] of splitOutputs.entries()){
@@ -867,8 +935,17 @@ export function bootPilot({canvas,ctx,world}) {
           if(output.value!==label)output.value=label;
           output.dataset.trend=delta<0?'gain':delta>0?'loss':'';
         }
-        $('.pilot-speed span').dataset.available=String(!car.pit&&drsZoneAt(car.s)>=0);
-        $('.pilot-speed span').dataset.active=String(car.drs);
+        const drsAvailable=!car.pit&&drsZoneAt(car.s)>=0,drsLabel=$('.pilot-speed span');
+        if(drsAvailable&&!lastDrsAvailable&&!resuming)racingAudio.notifyDRS();
+        lastDrsAvailable=drsAvailable;
+        drsLabel.dataset.available=String(drsAvailable);
+        drsLabel.dataset.active=String(car.drs);
+        const approaching=!car.pit&&distanceToDRS(car.s)<=180;
+        drsLabel.textContent=car.drs?'DRS ABERTO':drsAvailable?'DRS DISPONÍVEL':car.drsArmed&&controls.prefs.drsMode==='toggle'?'DRS ARMADO':approaching?'DRS À FRENTE':'DRS FECHADO';
+        const touchDRS=track.querySelector('[data-key=e]');
+        touchDRS.dataset.active=String(car.drs);
+        touchDRS.setAttribute('aria-label',drsLabel.textContent);
+        ghost.update(car);
         radio(resuming?'Aguarde a contagem para continuar.':red?'Aguarde o sinal verde.':green?'Largada liberada · mantenha W ou ↑ para acelerar.':car.pit?'Segure W para sair dos boxes.':car.spin>0?'Rodada · alivie os comandos para recuperar.':car.locked?'Rodas travadas · alivie o freio.':car.off?'Brita · aderência reduzida.':car.start===null?'Cruze a linha para começar o cronômetro.':latest?`Última volta ${format(latest.ms)}`:'Volta cronometrada em andamento.');
       }
     } else racingAudio.update();

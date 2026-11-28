@@ -40,6 +40,14 @@ export function createRacingAudio() {
   }
   return {
     get enabled(){return enabled;},
+    notifyDRS(){
+      if(!enabled||audio?.state!=='running')return;
+      const oscillator=audio.createOscillator(),volume=audio.createGain(),now=audio.currentTime;
+      oscillator.frequency.setValueAtTime(880,now);oscillator.frequency.setValueAtTime(1174,now+.1);
+      volume.gain.setValueAtTime(.045,now);volume.gain.exponentialRampToValueAtTime(.001,now+.23);
+      oscillator.connect(volume);volume.connect(audio.destination);oscillator.start(now);oscillator.stop(now+.24);
+      oscillator.onended=()=>{oscillator.disconnect();volume.disconnect();};
+    },
     async setEnabled(on) {
       enabled=on;
       if(!on)return false;

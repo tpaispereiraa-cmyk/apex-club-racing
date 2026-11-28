@@ -4,6 +4,10 @@ Protótipo de corrida top-down para navegador, feito em Canvas 2D, sem dependên
 
 Execute `npm run dev` e abra http://127.0.0.1:5173.
 
+Em **Pilotagem**, configure teclas, zoom persistente, controles de toque e gamepads reconhecidos pelo navegador. O padrão Xbox usa o analógico esquerdo, RT/LT, A para DRS e Menu para pausar. Botões, eixo de direção e zona morta podem ser ajustados. Teclado, toque e controle compartilham a mesma física.
+
+O modo Pilotar oferece uma linha sugerida por minimização de mudanças de direção dentro da pista, zebras de 12 unidades e zonas de DRS marcadas em azul. A linha é uma referência geométrica para pilotar. O DRS pode funcionar segurando ou com um toque, com aviso sonoro e fechamento automático ao frear. Fantasmas de treino e quali usam os replays disponíveis da sessão, com referência pessoal, próximo colocado ou líder, transparência e diferença de tempo na mesma distância.
+
 **Pilotar** abre a série por convite em `/pilotar`. O circuito, o calendário e as cotas ficam em `pilot-rounds.js`. Resultados e replays de séries anteriores podem ser acessados pelo link da rodada. Use Node 24 para testar localmente, com o código de convite `apex-local`. O servidor grava a inscrição e as voltas em SQLite na pasta ignorada `artifacts/`. O ambiente hospedado usa D1 com as migrações de `drizzle/` e o segredo de runtime `PRACTICE_INVITE`. A volta de saída fica fora da contagem e o melhor tempo considera as voltas válidas.
 
 **Jogar Manager** abre a carreira local: você assume uma escuderia, desenvolve peças, monta os dois carros, contrata pilotos, ajusta o carro e define estratégia/ordens. A temporada segue 14 etapas, de Melbourne até Interlagos. Saves antigos preservam resultados e recebem os circuitos faltantes. Veja [manager/README.md](manager/README.md).
