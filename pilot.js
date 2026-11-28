@@ -27,6 +27,7 @@ const phases = {
 };
 const draftKey = 'apex-practice-setup-v1';
 const pilotRound=pilotRoundById(new URLSearchParams(location.search).get('rodada'))??ACTIVE_PILOT_ROUND;
+const previousRace=pilotRound.circuit==='silverstone'?pilotRoundById('2026-11-25-red-bull-ring'):null;
 const roundSuffix=pilotRound.id==='2026-11-22-weekend'?'':`:${pilotRound.id}`;
 const pendingKey = `apex-practice-pending-v1${roundSuffix}`;
 const runKey = `apex-pilot-run-v1${roundSuffix}`;
@@ -70,6 +71,7 @@ export function bootPilot({canvas,ctx,world}) {
   ui.id='pilot';
   ui.innerHTML=`
     <nav class="pilot-nav"><a href="/" aria-label="Voltar ao APEX CLUB"><strong>A</strong> APEX CLUB</a><span>${CIRCUIT.name.toUpperCase()} / PILOTAR</span><div><button id="pilot-open-options" class="icon-button" type="button" aria-haspopup="dialog">PILOTAGEM</button><button id="pilot-sound" class="icon-button" aria-pressed="false">SOM OFF</button></div></nav>
+    ${previousRace?`<a id="pilot-previous-replay-banner" href="${pilotRoundUrl(previousRace.id)}&replay=1"><strong>Veja a corrida de Red Bull Ring</strong><span>Replay da etapa anterior</span></a>`:''}
     <button type="button" id="pilot-replay-banner" hidden><strong>Assista a corrida</strong><span>Replay · ${CIRCUIT.name} →</span></button>
     <div class="pilot-garage">
       <section class="pilot-intro"><span class="pilot-kicker">GP · ${CIRCUIT.name.toUpperCase()}</span><h1>Treino <em>livre.</em></h1><p id="pilot-deadline">Consultando o cronograma…</p>
@@ -346,6 +348,12 @@ export function bootPilot({canvas,ctx,world}) {
     if (!state) return;
     const {driver,phase,used=0,best,open,limit,closesAt,canStart,grid,lockedSetup}=state;
     $('#pilot-replay-banner').hidden=!state.replayAvailable;
+    if(state.replayAvailable&&new URLSearchParams(location.search).has('replay')){
+      const url=new URL(location.href);
+      url.searchParams.delete('replay');
+      history.replaceState(null,'',url.pathname+url.search+url.hash);
+      queueMicrotask(()=>$('#pilot-replay-banner').click());
+    }
     const race=phase==='race';
     const resumable=canResume(savedRun);
     const upcoming=state.sessions.find(session=>session.status==='upcoming');

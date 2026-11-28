@@ -5,8 +5,8 @@
 .pilot-nav { display: flex; align-items: center; justify-content: space-between; gap: 1rem; padding: 1rem clamp(1rem,4vw,4rem); border-bottom: 1px solid #c2d5c62b; background: #0e1a17e8; pointer-events: auto; }
 .pilot-nav a { color: inherit; text-decoration: none; font-weight: 800; }
 .pilot-nav strong { color: var(--lime); font-style: italic; margin-right: .35rem; }
-#pilot-replay-banner { pointer-events: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .45rem 1rem; padding: .75rem clamp(1rem,6vw,7rem); border: 0; color: #172215; background: var(--lime); text-align: left; }
-#pilot-replay-banner strong { font-size: clamp(1rem,3vw,1.35rem); }
+#pilot-replay-banner, #pilot-previous-replay-banner { pointer-events: auto; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .45rem 1rem; padding: .75rem clamp(1rem,6vw,7rem); border: 0; color: #172215; background: var(--lime); text-align: left; text-decoration: none; }
+#pilot-replay-banner strong, #pilot-previous-replay-banner strong { font-size: clamp(1rem,3vw,1.35rem); }
 .pilot-replay { pointer-events: auto; color: #f4f6ee; background: #121f1c; border: 1px solid #bbcdb970; width: min(74rem,calc(100vw - 1rem)); max-width: none; max-height: 96dvh; padding: clamp(.6rem,2vw,1.2rem); overflow: auto; }
 .pilot-replay::backdrop { background: #081310e8; }
 .pilot-replay header { position: static; height: auto; padding: 0; border: 0; display: flex; justify-content: space-between; align-items: center; gap: .75rem; margin-bottom: .75rem; }
