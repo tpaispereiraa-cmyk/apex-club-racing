@@ -93,8 +93,17 @@
 .pilot-form-card details { margin: 1rem 0; border-top: 1px solid #ccd9ca32; border-bottom: 1px solid #ccd9ca32; padding: .7rem 0; }
 .pilot-form-card summary { cursor: pointer; }
 .pilot-sliders { margin-top: .8rem; display: grid; gap: .7rem; }
-.pilot-sliders label { display: grid; gap: .15rem; color: #d6e5d7; font-size: .9rem; }
-.pilot-sliders label span { display: flex; justify-content: space-between; }
+.pilot-setup-control { color: #d6e5d7; font-size: .9rem; }
+.pilot-setup-heading { display: flex; align-items: center; gap: .45rem; }
+.pilot-setup-heading label { margin: 0; }
+.pilot-setup-heading output { margin-left: auto; color: var(--lime); font-variant-numeric: tabular-nums; }
+.pilot-setup-info { display: inline-grid; place-items: center; flex: 0 0 1.8rem; width: 1.8rem; height: 1.8rem; padding: 0; border: 1px solid #c5d5bb70; border-radius: 50%; color: var(--lime); background: #24362b; font: italic bold .95rem Georgia,serif; cursor: pointer; }
+.pilot-setup-info:hover, .pilot-setup-info[aria-expanded=true] { background: #35452a; border-color: var(--lime); }
+.pilot-setup-info:focus-visible { outline: 2px solid var(--lime); outline-offset: 3px; }
+.pilot-setup-explanation { margin: .4rem 0 .55rem; padding: .8rem; border: 1px solid #d5f56145; border-radius: .5rem; background: #12231d; line-height: 1.5; }
+#pilot .pilot-setup-explanation p { margin: 0 0 .65rem; font-size: .85rem; }
+.pilot-setup-explanation strong { display: block; color: var(--lime); margin-bottom: .15rem; }
+#pilot .pilot-setup-explanation .pilot-setup-tip { margin-bottom: 0; color: #b8caba; font-size: .8rem; }
 .pilot-sliders input { width: 100%; accent-color: var(--lime); }
 #pilot .pilot-controls { font-size: .85rem; margin-bottom: 0; }
 .pilot-controls kbd { margin: 0 .2rem; color: var(--lime); }

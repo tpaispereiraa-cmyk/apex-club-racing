@@ -18,6 +18,13 @@ const format = ms => ms == null ? '—' : `${Math.floor(ms/60000)}:${((ms%60000)
 const closeDate = new Intl.DateTimeFormat('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit',timeZone:'America/Sao_Paulo'});
 const deadline = date => closeDate.format(new Date(date));
 const patterns = {clean:'Clássica',stripe:'Listras',chevron:'Setas',checkers:'Xadrez',split:'Diagonal',bolt:'Raio'};
+const setupHelp = {
+  frontWing:{more:'A frente responde mais à direção e o carro ganha apoio em alta. Em troca, aumenta o arrasto nas retas e a traseira pode ficar mais sensível.',less:'A frente fica menos agressiva e há menos arrasto. Você perde apoio em alta e pode precisar reduzir mais para contornar as curvas.',tip:'Combine com a asa traseira: a diferença entre as duas muda o equilíbrio do carro.'},
+  rearWing:{more:'Dá mais apoio e estabilidade à traseira, principalmente nas curvas rápidas. O arrasto aumenta e a velocidade nas retas cai.',less:'Reduz o arrasto e favorece a velocidade nas retas. A traseira fica mais solta e exige cuidado ao virar ou frear em curva.',tip:'É a asa que mais pesa na troca entre velocidade de reta e apoio em curva.'},
+  antiRoll:{more:'Deixa a resposta da direção mais ágil, mas o carro pode ficar mais arisco nas curvas rápidas e nas frenagens com o volante virado.',less:'Deixa a direção mais dócil e menos imediata. O carro pode exigir mais comando para mudar de direção.',tip:'Perto de 5 há mais aderência mecânica. Valores muito altos ou muito baixos reduzem essa aderência.'},
+  brakeBias:{more:'Se estiver abaixo de 57%, aproximar de 57% melhora a força da frenagem. Acima de 57%, aumentar faz o carro frear menos.',less:'Se estiver acima de 57%, aproximar de 57% melhora a força da frenagem. Abaixo de 57%, diminuir faz o carro frear menos.',tip:'Neste carro, 57% é o ponto de frenagem mais forte. Esse ajuste ainda não simula travamento separado das rodas dianteiras e traseiras.'},
+  rideHeight:{more:'Se estiver abaixo de 43 mm, aproximar de 43 mm melhora o apoio aerodinâmico. Acima disso, subir mais reduz o apoio nas curvas rápidas.',less:'Se estiver acima de 43 mm, aproximar de 43 mm melhora o apoio. Abaixo disso, baixar mais reduz o apoio; abaixo de 34 mm a perda é maior.',tip:'43 mm é a referência de melhor apoio neste carro. A altura ainda não muda o impacto das zebras.'}
+};
 const phases = {
   practice:{title:'Treino <em>livre.</em>',instructions:limit=>limit==null
     ?'Voltas ilimitadas para testar acertos e buscar seu melhor tempo até o fim da sessão.'
@@ -102,7 +109,7 @@ export function bootPilot({canvas,ctx,world}) {
         </details>
         <div id="pilot-setup" hidden><h2 id="pilot-driver"></h2><p id="pilot-grid" hidden></p>
         <div id="pilot-acerto"><p>Escolha um acerto para a próxima saída.</p><div class="pilot-presets" role="group" aria-label="Acertos sugeridos">${Object.entries(PRESETS).map(([id,p])=>`<button data-preset="${id}" aria-pressed="false"><b>${p.name}</b><small>${p.description}</small></button>`).join('')}</div>
-        <details><summary>Configuração avançada</summary><div class="pilot-sliders">${PILOT_SETUP.map(id=>{const s=SETUP[id];return `<label><span>${s.label} <output></output></span><input type="range" name="${id}" min="${s.min}" max="${s.max}" step="${s.step}"></label>`;}).join('')}</div></details>
+        <details><summary>Configuração avançada</summary><div class="pilot-sliders">${PILOT_SETUP.map(id=>{const s=SETUP[id],help=setupHelp[id];return `<div class="pilot-setup-control"><div class="pilot-setup-heading"><label for="pilot-adjust-${id}">${s.label}</label><button type="button" class="pilot-setup-info" data-setup-help="${id}" aria-label="Como ajustar ${s.label}" aria-expanded="false" aria-controls="pilot-help-${id}">i</button><output for="pilot-adjust-${id}"></output></div><input id="pilot-adjust-${id}" type="range" name="${id}" min="${s.min}" max="${s.max}" step="${s.step}"><div class="pilot-setup-explanation" id="pilot-help-${id}" hidden><p><strong>+ Aumentar</strong>${help.more}</p><p><strong>− Diminuir</strong>${help.less}</p><p class="pilot-setup-tip">${help.tip}</p></div></div>`;}).join('')}</div></details>
         <button type="button" id="pilot-open-engineer" aria-haspopup="dialog" aria-controls="pilot-engineer-dialog" hidden>Falar com o engenheiro</button><p id="pilot-engineer-note" role="status" hidden></p></div>
         <p id="pilot-race-setup-notice" hidden>Você iniciará <strong>ESTA</strong> corrida com a configuração de seu melhor tempo.</p>
         <div class="pilot-start-options"><button class="pilot-button" data-pilot-start="pits">Sair dos boxes</button><button class="pilot-button" data-pilot-start="flying">Iniciar volta rápida</button><button class="pilot-button" data-pilot-start="grid" hidden>Ir para a largada</button><button class="pilot-button" id="pilot-resume" hidden>Continuar</button></div>
@@ -687,6 +694,13 @@ export function bootPilot({canvas,ctx,world}) {
     finally {busy=false;}
   });
   $('#pilot-setup').addEventListener('click',e=>{
+    const info=e.target.closest('[data-setup-help]');
+    if(info){
+      const expanded=info.getAttribute('aria-expanded')!=='true';
+      info.setAttribute('aria-expanded',String(expanded));
+      $('#'+info.getAttribute('aria-controls')).hidden=!expanded;
+      return;
+    }
     const selected=e.target.closest('[data-preset]')?.dataset.preset;
     if(selected) {preset=selected;setup=setupFor(preset);engineerNote.hidden=true;syncSetup();}
   });
