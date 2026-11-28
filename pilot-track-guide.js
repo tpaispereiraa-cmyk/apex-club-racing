@@ -21,10 +21,15 @@ export const PILOT_RACING_LINE=points.map(({x,y},i)=>({x,y,s:i*step}));
 export function drawPilotGuides(ctx,{line=true,drs=true}={}) {
   ctx.save();
   if(line){
-    ctx.lineWidth=3.5;ctx.strokeStyle='#e9f5bbaa';ctx.setLineDash([13,11]);
+    // A continuous rubbered-in strip blends into the asphalt while still
+    // showing the corner entry, apex and exit of the suggested racing line.
+    ctx.lineCap='round';ctx.lineJoin='round';ctx.setLineDash([]);
     ctx.beginPath();
     points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));
-    ctx.closePath();ctx.stroke();ctx.setLineDash([]);
+    ctx.closePath();
+    for(const [width,color] of [[30,'#17201c0a'],[24,'#17201c12'],[18,'#17201c24']]){
+      ctx.lineWidth=width;ctx.strokeStyle=color;ctx.stroke();
+    }
   }
   if(drs)for(const zone of DRS_ZONES){
     for(const side of [-1,1]){
