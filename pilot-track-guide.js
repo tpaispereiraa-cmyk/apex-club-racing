@@ -1,34 +1,50 @@
 import {at,length,ROAD} from './track.js';
 import {DRS_ZONES,inInterval} from './track-profile.js';
+import {createRacingLine} from './racing-line.js';
 
 const count=Math.ceil(length/32),step=length/count;
-const points=Array.from({length:count},(_,i)=>{
-  const p=at(i*step);
-  return {...p,offset:0,nx:-Math.sin(p.angle),ny:Math.cos(p.angle)};
+export const PILOT_RACING_LINE=createRacingLine({at,length,road:ROAD});
+const points=PILOT_RACING_LINE;
+const noise=s=>Math.sin(s*.037)*.55+Math.sin(s*.113)*.25+Math.sin(s*.271)*.2;
+const widths=points.map(p=>{
+  const a=at(p.s-100),b=at(p.s+100);
+  const turn=Math.abs(Math.atan2(Math.sin(b.angle-a.angle),Math.cos(b.angle-a.angle)));
+  return 9+Math.min(7,turn*7)+noise(p.s)*1.1;
 });
-// Reduce changes of direction inside a bounded corridor around the track.
-for(let pass=0;pass<140;pass++){
-  for(let i=0;i<count;i++){
-    const p=points[i],a=points[(i+count-1)%count],b=points[(i+1)%count];
-    const c=points[(i+count-2)%count],d=points[(i+2)%count];
-    const gx=6*p.x-4*(a.x+b.x)+c.x+d.x,gy=6*p.y-4*(a.y+b.y)+c.y+d.y;
-    const offset=Math.max(-ROAD*.3,Math.min(ROAD*.3,p.offset-(gx*p.nx+gy*p.ny)*.13));
-    p.x+=(offset-p.offset)*p.nx;p.y+=(offset-p.offset)*p.ny;p.offset=offset;
+let rubberPaths;
+function makeRubberPaths(){
+  // Irregular, feathered rubber deposits, rather than a painted guide stripe.
+  const layers=[1.35,1.15,.95,.72,.45].map((scale,j)=>{
+    const path=new Path2D();
+    for(const side of [1,-1]){
+      for(let n=0;n<points.length;n++){
+        const i=side===1?n:points.length-1-n,p=points[i];
+        const lateral=Math.max(-ROAD/2+2,Math.min(ROAD/2-2,p.offset+side*widths[i]*scale));
+        const q=at(p.s,lateral);
+        if(side===1&&n===0)path.moveTo(q.x,q.y);else path.lineTo(q.x,q.y);
+      }
+    }
+    path.closePath();return {path,color:['#22282004','#22282006','#22282008','#22282009','#22282009'][j],fill:true};
+  });
+  for(let lane=-5;lane<=5;lane++){
+    const path=new Path2D();
+    points.forEach((p,i)=>{
+      const q=at(p.s,p.offset+lane*widths[i]/6+noise(p.s+lane*67)*.8);
+      if(i)path.lineTo(q.x,q.y);else path.moveTo(q.x,q.y);
+    });
+    path.closePath();layers.push({path,color:'#20251f0d',width:.45+Math.abs(lane%3)*.18});
   }
+  return layers;
 }
-export const PILOT_RACING_LINE=points.map(({x,y},i)=>({x,y,s:i*step}));
 
 export function drawPilotGuides(ctx,{line=true,drs=true}={}) {
   ctx.save();
   if(line){
-    // A continuous rubbered-in strip blends into the asphalt while still
-    // showing the corner entry, apex and exit of the suggested racing line.
     ctx.lineCap='round';ctx.lineJoin='round';ctx.setLineDash([]);
-    ctx.beginPath();
-    points.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));
-    ctx.closePath();
-    for(const [width,color] of [[30,'#17201c0a'],[24,'#17201c12'],[18,'#17201c24']]){
-      ctx.lineWidth=width;ctx.strokeStyle=color;ctx.stroke();
+    rubberPaths??=makeRubberPaths();
+    for(const layer of rubberPaths){
+      if(layer.fill){ctx.fillStyle=layer.color;ctx.fill(layer.path);}
+      else {ctx.lineWidth=layer.width;ctx.strokeStyle=layer.color;ctx.stroke(layer.path);}
     }
   }
   if(drs)for(const zone of DRS_ZONES){

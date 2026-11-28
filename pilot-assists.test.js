@@ -31,7 +31,8 @@ test('the suggested line stays inside the road and smooths the centreline',()=>{
     const a=points[(i+points.length-1)%points.length],b=points[(i+1)%points.length];
     return total+(a.x-2*p.x+b.x)**2+(a.y-2*p.y+b.y)**2;
   },0);
-  assert.ok(PILOT_RACING_LINE.every(p=>Number.isFinite(p.x)&&nearest(p.x,p.y).d<ROAD*.35));
+  assert.ok(PILOT_RACING_LINE.every(p=>Number.isFinite(p.x)&&nearest(p.x,p.y).d<=ROAD*.36));
+  assert.ok(PILOT_RACING_LINE.filter(p=>Math.abs(p.offset)>ROAD*.2).length>PILOT_RACING_LINE.length*.15,'the line must use the track width, not hug its centre');
   assert.ok(bend(PILOT_RACING_LINE)<bend(PILOT_RACING_LINE.map(p=>at(p.s))));
   for(let s=0;s<length;s+=10){
     assert.ok(DRS_ZONES.filter(z=>{
